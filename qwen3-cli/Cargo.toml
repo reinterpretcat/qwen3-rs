@@ -1,0 +1,23 @@
+[package]
+name = "qwen3-cli"
+description = "Command-line interface for qwen3 library"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "qwen3"
+path = "src/main.rs"
+
+[dependencies]
+qwen3-export =  { workspace = true }
+qwen3-inference = { workspace = true }
+
+anyhow = { workspace = true }
+clap = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }

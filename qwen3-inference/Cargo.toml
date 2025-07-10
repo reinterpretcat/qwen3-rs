@@ -1,0 +1,16 @@
+[package]
+name = "qwen3-inference"
+description = "Qwen3 inference code."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+byteorder = { workspace = true }
+rayon = { workspace = true }
+memmap2 = { workspace = true }

@@ -1,0 +1,9 @@
+.vscode/
+target/
+Qwen3-0.6B*
+Qwen3-1.7B*
+Qwen3-4B*
+Qwen3-8B*
+
+*.py
+*.c
