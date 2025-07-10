@@ -665,7 +665,7 @@ impl TransformerBuilder {
             ($size:expr, $field:literal) => {
                 // SAFETY: we keep the mmap alive for the lifetime of the transformer
                 unsafe {
-                    std::mem::transmute(
+                    std::mem::transmute::<&[f32], &[f32]>(
                         mapper
                             .get_f32_slice($size)
                             .with_context(|| format!("Failed to read {}", $field))?,
@@ -804,7 +804,7 @@ impl TransformerBuilder {
             group_size,
         );
 
-        let attention = MultiHeadAttention::new(wq, wk, wv, wo, q_norm, k_norm, &model_config);
+        let attention = MultiHeadAttention::new(wq, wk, wv, wo, q_norm, k_norm, model_config);
 
         // FFN normalization
         let ffn_norm_start = layer_idx * dim;

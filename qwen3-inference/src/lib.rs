@@ -117,12 +117,12 @@ pub fn run_inference(inference_config: InferenceConfig) -> Result<()> {
 
     let tokenizer = Tokenizer::new(
         &inference_config.checkpoint_path,
-        transformer_config.vocab_size as usize,
+        transformer_config.vocab_size,
         inference_config.enable_thinking,
     )?;
 
     let mut sampler = Sampler::new(
-        transformer_config.vocab_size as usize,
+        transformer_config.vocab_size,
         inference_config.temperature,
         inference_config.topp,
         inference_config.seed,

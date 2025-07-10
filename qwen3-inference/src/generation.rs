@@ -18,7 +18,7 @@ pub fn generate(
         anyhow::bail!("Please provide a prompt");
     }
 
-    let seq_len = transformer.config.seq_len as usize;
+    let seq_len = transformer.config.seq_len;
     let mut state = GenerationState::new(prompt_tokens[0]);
 
     while state.pos < seq_len {
@@ -54,7 +54,7 @@ pub fn chat(
     system_prompt: Option<&str>,
 ) -> Result<()> {
     let stdin = io::stdin();
-    let seq_len = transformer.config.seq_len as usize;
+    let seq_len = transformer.config.seq_len;
     let mut state = GenerationState::new(0);
     let mut user_turn = true;
     let mut next_token = 0;
@@ -83,17 +83,15 @@ pub fn chat(
                 break;
             }
             user_turn = false;
-        } else {
-            if handle_assistant_turn(
-                transformer,
-                tokenizer,
-                sampler,
-                &mut state,
-                &mut next_token,
-                &mut user_turn,
-            )? {
-                continue; // Turn ended, continue to next iteration
-            }
+        } else if handle_assistant_turn(
+            transformer,
+            tokenizer,
+            sampler,
+            &mut state,
+            &mut next_token,
+            &mut user_turn,
+        )? {
+            continue; // Turn ended, continue to next iteration
         }
     }
 
@@ -122,7 +120,7 @@ fn handle_user_turn(
 
     // Process prompt tokens
     for &token in &prompt_tokens {
-        if state.pos >= transformer.config.seq_len as usize {
+        if state.pos >= transformer.config.seq_len {
             break;
         }
 
