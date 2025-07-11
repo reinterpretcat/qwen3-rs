@@ -2,7 +2,7 @@ use std::path::Path;
 
 use anyhow::Result;
 use clap::{Arg, ArgMatches, Command};
-use log::{debug, error, info};
+use log::{error, info};
 use qwen3_export::{export_model, load_hf_config};
 use qwen3_inference::{InferenceConfigBuilder, run_inference};
 
@@ -177,8 +177,6 @@ fn run_inference_command(matches: &ArgMatches) -> Result<()> {
         .seed(matches.get_one::<u64>("seed").copied())
         .build()
         .map_err(|e| anyhow::anyhow!(e))?;
-
-    debug!("🧪 Inference config: {config:?}");
 
     run_inference(config).map_err(|e| anyhow::anyhow!("Inference failed: {e}"))?;
 

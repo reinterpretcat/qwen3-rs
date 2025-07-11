@@ -250,3 +250,19 @@ impl Tokenizer {
         tokens
     }
 }
+
+impl std::fmt::Debug for Tokenizer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let bos_token = (self.bos_token_id, self.decode(self.bos_token_id as usize));
+        let eos_token = (self.eos_token_id, self.decode(self.eos_token_id as usize));
+
+        f.debug_struct("Tokenizer")
+            .field("vocab_size", &self.vocab_size)
+            .field("max_token_length", &self.max_token_length)
+            .field("bos_token_id", &bos_token)
+            .field("eos_token_id", &eos_token)
+            .field("prompt_template", &self.prompt_template)
+            .field("system_prompt_template", &self.system_prompt_template)
+            .finish_non_exhaustive()
+    }
+}

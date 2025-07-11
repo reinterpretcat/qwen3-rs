@@ -110,6 +110,8 @@ impl InferenceConfigBuilder {
 
 /// Runs inference.
 pub fn run_inference(inference_config: InferenceConfig) -> Result<()> {
+    debug!("{inference_config:#?}");
+
     let mut transformer = TransformerBuilder::new(&inference_config.checkpoint_path)
         .with_ctx_length(inference_config.ctx_length)
         .build()?;
@@ -123,6 +125,8 @@ pub fn run_inference(inference_config: InferenceConfig) -> Result<()> {
         transformer_config.vocab_size,
         inference_config.enable_thinking,
     )?;
+
+    debug!("{tokenizer:#?}");
 
     let mut sampler = Sampler::new(
         transformer_config.vocab_size,
