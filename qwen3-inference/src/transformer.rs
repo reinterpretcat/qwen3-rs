@@ -93,6 +93,32 @@ impl Transformer {
     }
 }
 
+impl std::fmt::Debug for Transformer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        struct BlocksSummary<'a, T>(&'a [T]);
+
+        impl<'a, T: std::fmt::Debug> std::fmt::Debug for BlocksSummary<'a, T> {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.debug_list()
+                    .entries(self.0.iter().take(1))
+                    .entry(&format_args!(
+                        "... and {} more",
+                        self.0.len().saturating_sub(1)
+                    ))
+                    .finish()
+            }
+        }
+
+        f.debug_struct("Transformer")
+            .field("config", &self.config)
+            .field("token_embedding", &self.token_embedding)
+            .field("blocks", &BlocksSummary(&self.blocks))
+            .field("final_norm", &self.final_norm)
+            .field("lm_head", &self.lm_head)
+            .finish()
+    }
+}
+
 /// Token embedding layer - converts token IDs to dense vectors
 ///
 /// **Purpose**: Maps discrete vocabulary tokens to continuous vector space
@@ -115,6 +141,15 @@ impl TokenEmbedding {
         let start_idx = token * self.dim;
         let end_idx = start_idx + self.dim;
         output[..self.dim].copy_from_slice(&self.embedding_table[start_idx..end_idx]);
+    }
+}
+
+impl std::fmt::Debug for TokenEmbedding {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TokenEmbedding")
+            .field("dim", &self.dim)
+            .field("vocab_size", &(self.embedding_table.len() / self.dim))
+            .finish()
     }
 }
 
@@ -164,6 +199,14 @@ impl RMSNorm {
         x.iter_mut().zip(self.weight.iter()).for_each(|(val, &w)| {
             *val = w * (rms_norm_factor * *val);
         });
+    }
+}
+
+impl std::fmt::Debug for RMSNorm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RMSNorm")
+            .field("dim", &self.weight.len())
+            .finish()
     }
 }
 
@@ -218,6 +261,14 @@ impl RoPE {
     }
 }
 
+impl std::fmt::Debug for RoPE {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RoPE")
+            .field("head_dim", &self.head_dim)
+            .finish()
+    }
+}
+
 /// Linear layer with quantized weights for memory-efficient inference
 ///
 /// **Quantization Strategy**:
@@ -255,6 +306,16 @@ impl Linear {
             self.out_features,
             self.group_size,
         );
+    }
+}
+
+impl std::fmt::Debug for Linear {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Linear")
+            .field("in_features", &self.in_features)
+            .field("out_features", &self.out_features)
+            .field("group_size", &self.group_size)
+            .finish()
     }
 }
 
@@ -421,6 +482,22 @@ impl MultiHeadAttention {
     }
 }
 
+impl std::fmt::Debug for MultiHeadAttention {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MultiHeadAttention")
+            .field("n_heads", &self.n_heads)
+            .field("n_kv_heads", &self.n_kv_heads)
+            .field("head_dim", &self.head_dim)
+            .field("wq", &self.wq)
+            .field("wk", &self.wk)
+            .field("wv", &self.wv)
+            .field("wo", &self.wo)
+            .field("q_norm", &self.q_norm)
+            .field("k_norm", &self.k_norm)
+            .finish()
+    }
+}
+
 /// Feed-Forward Network with SwiGLU activation
 ///
 /// **Architecture**: Two-layer MLP with gated activation
@@ -467,6 +544,17 @@ impl FeedForward {
         // Down projection
         quantize(&mut state.hq, &state.hb, state.hb.len(), self.w2.group_size);
         self.w2.forward(&mut state.xb, &state.hq);
+    }
+}
+
+impl std::fmt::Debug for FeedForward {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FeedForward")
+            .field("hidden_dim", &self.w1.out_features)
+            .field("w1", &self.w1)
+            .field("w2", &self.w2)
+            .field("w3", &self.w3)
+            .finish()
     }
 }
 
@@ -562,6 +650,18 @@ impl TransformerBlock {
             .iter_mut()
             .zip(state.xb.iter())
             .for_each(|(x_val, &delta)| *x_val += delta);
+    }
+}
+
+impl std::fmt::Debug for TransformerBlock {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TransformerBlock")
+            .field("layer_idx", &self.layer_idx)
+            .field("attn_norm", &self.attn_norm)
+            .field("attention", &self.attention)
+            .field("ffn_norm", &self.ffn_norm)
+            .field("feed_forward", &self.feed_forward)
+            .finish()
     }
 }
 

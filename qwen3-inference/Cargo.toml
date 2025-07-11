@@ -14,3 +14,4 @@ anyhow = { workspace = true }
 byteorder = { workspace = true }
 rayon = { workspace = true }
 memmap2 = { workspace = true }
+log = { workspace = true }

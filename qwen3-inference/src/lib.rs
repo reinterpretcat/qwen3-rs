@@ -11,6 +11,7 @@ mod transformer;
 mod utils;
 
 use anyhow::Result;
+use log::debug;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::generation::{chat, generate};
@@ -112,6 +113,8 @@ pub fn run_inference(inference_config: InferenceConfig) -> Result<()> {
     let mut transformer = TransformerBuilder::new(&inference_config.checkpoint_path)
         .with_ctx_length(inference_config.ctx_length)
         .build()?;
+
+    debug!("{transformer:#?}");
 
     let transformer_config = transformer.get_config();
 
