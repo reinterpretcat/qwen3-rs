@@ -9,17 +9,15 @@ use std::path::Path;
 /// from tokenizer_config.json. It generates templates that match the exact
 /// output of the Python reference implementation.
 ///
-/// Qwen3 Template Analysis:
-/// - Uses `<|im_start|>role\ncontent<|im_end|>\n` format
-/// - Supports thinking mode via `<think>` tags
-/// - When `enable_thinking=false`: Pre-adds `<think>\n\n</think>\n\n`
-/// - When `enable_thinking=true/undefined`: Lets model add thinking naturally
+/// Supported Templates:
+/// - Qwen3: Uses `<|im_start|>role\ncontent<|im_end|>\n` format with thinking support
+/// - DeepSeek-R1: Uses `<｜User｜>content<｜Assistant｜>` format without thinking
 ///
 /// Generated Templates:
 /// - `.template`: Single user message with thinking disabled
-/// - `.template.with-thinking`: Single user message with thinking enabled
+/// - `.template.with-thinking`: Single user message with thinking enabled (if supported)
 /// - `.template.with-system`: System + user messages with thinking disabled
-/// - `.template.with-system-and-thinking`: System + user messages with thinking enabled
+/// - `.template.with-system-and-thinking`: System + user messages with thinking enabled (if supported)
 #[derive(Debug)]
 pub struct ChatTemplateExporter;
 
@@ -37,6 +35,15 @@ pub struct TemplateConfig {
 struct TemplateCapabilities {
     supports_thinking: bool,
     supports_system: bool,
+    template_type: TemplateType,
+}
+
+/// Different template types we support
+#[derive(Debug, Clone)]
+enum TemplateType {
+    Qwen3,
+    DeepSeek,
+    Unknown,
 }
 
 impl ChatTemplateExporter {
@@ -74,6 +81,7 @@ impl ChatTemplateExporter {
 
         // Analyze template capabilities
         let capabilities = self.analyze_template_capabilities(&chat_template);
+        info!("Template type: {:?}", capabilities.template_type);
         info!("Template capabilities:");
         info!("   Supports thinking: {}", capabilities.supports_thinking);
         info!("   Supports system: {}", capabilities.supports_system);
@@ -89,9 +97,31 @@ impl ChatTemplateExporter {
 
     /// Analyze template to determine what capabilities it supports
     fn analyze_template_capabilities(&self, template: &str) -> TemplateCapabilities {
+        let template_type = if template.contains("<|im_start|>") && template.contains("<|im_end|>")
+        {
+            TemplateType::Qwen3
+        } else if template.contains("<｜User｜>") && template.contains("<｜Assistant｜>") {
+            TemplateType::DeepSeek
+        } else {
+            TemplateType::Unknown
+        };
+
+        let (supports_thinking, supports_system) = match template_type {
+            TemplateType::Qwen3 => (
+                template.contains("enable_thinking"),
+                template.contains("system") && template.contains("messages[0].role"),
+            ),
+            TemplateType::DeepSeek => (
+                false,                              // DeepSeek template doesn't have enable_thinking parameter
+                template.contains("system_prompt"), // DeepSeek handles system messages differently
+            ),
+            TemplateType::Unknown => (false, false),
+        };
+
         TemplateCapabilities {
-            supports_thinking: template.contains("enable_thinking"),
-            supports_system: template.contains("system") && template.contains("messages[0].role"),
+            supports_thinking,
+            supports_system,
+            template_type,
         }
     }
 
@@ -185,7 +215,8 @@ impl ChatTemplateExporter {
         }
 
         template_configs.iter().try_for_each(|config| {
-            let template_content = self.render_chat_template(chat_template, config)?;
+            let template_content =
+                self.render_chat_template(chat_template, config, capabilities)?;
             let template_path = format!("{}{}", output_path.display(), config.suffix);
 
             std::fs::write(&template_path, template_content)
@@ -207,26 +238,39 @@ impl ChatTemplateExporter {
     }
 
     /// Render chat template for specific configuration
-    /// This is a simplified Jinja2 template renderer for Qwen3-style templates
-    fn render_chat_template(&self, _template: &str, config: &TemplateConfig) -> Result<String> {
-        // Generate templates based on configuration
-        if config.has_system {
-            self.render_system_message_template(config.enable_thinking)
-        } else {
-            self.render_single_message_template(config.enable_thinking)
+    /// This is a simplified Jinja2 template renderer for different template types
+    fn render_chat_template(
+        &self,
+        _template: &str,
+        config: &TemplateConfig,
+        capabilities: &TemplateCapabilities,
+    ) -> Result<String> {
+        match capabilities.template_type {
+            TemplateType::Qwen3 => {
+                if config.has_system {
+                    self.render_qwen3_system_message_template(config.enable_thinking)
+                } else {
+                    self.render_qwen3_single_message_template(config.enable_thinking)
+                }
+            }
+            TemplateType::DeepSeek => {
+                if config.has_system {
+                    self.render_deepseek_system_message_template()
+                } else {
+                    self.render_deepseek_single_message_template()
+                }
+            }
+            TemplateType::Unknown => Err(anyhow::anyhow!(
+                "Unknown template type, cannot render templates"
+            )),
         }
     }
 
-    /// Render template for single user message (mimics Python's messages=[{"role": "user", "content": "%s"}])
-    fn render_single_message_template(&self, enable_thinking: bool) -> Result<String> {
-        // This matches the exact Python output for messages=[{"role": "user", "content": "%s"}]
-        // with add_generation_prompt=True and enable_thinking parameter
-
+    /// Render Qwen3 template for single user message
+    fn render_qwen3_single_message_template(&self, enable_thinking: bool) -> Result<String> {
         if enable_thinking {
-            // When enable_thinking is true, no <think> tags are pre-added (let model decide)
             Ok("<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n".to_string())
         } else {
-            // When enable_thinking is false, add empty <think> tags as per template
             Ok(
                 "<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
                     .to_string(),
@@ -234,18 +278,26 @@ impl ChatTemplateExporter {
         }
     }
 
-    /// Render template for system + user messages (mimics Python's messages=[{"role": "system", "content": "%s"}, {"role": "user", "content": "%s"}])
-    fn render_system_message_template(&self, enable_thinking: bool) -> Result<String> {
-        // This matches the exact Python output for messages=[{"role": "system", "content": "%s"}, {"role": "user", "content": "%s"}]
-        // with add_generation_prompt=True and enable_thinking parameter
-
+    /// Render Qwen3 template for system + user messages
+    fn render_qwen3_system_message_template(&self, enable_thinking: bool) -> Result<String> {
         if enable_thinking {
-            // When enable_thinking is true, no <think> tags are pre-added (let model decide)
             Ok("<|im_start|>system\n%s<|im_end|>\n<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n".to_string())
         } else {
-            // When enable_thinking is false, add empty <think> tags as per template
             Ok("<|im_start|>system\n%s<|im_end|>\n<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n".to_string())
         }
+    }
+
+    /// Render DeepSeek template for single user message
+    fn render_deepseek_single_message_template(&self) -> Result<String> {
+        // DeepSeek format: <｜begin▁of▁sentence｜>system_prompt<｜User｜>user_content<｜Assistant｜>
+        // For single message, no system prompt
+        Ok("<｜begin▁of▁sentence｜><｜User｜>%s<｜Assistant｜>".to_string())
+    }
+
+    /// Render DeepSeek template for system + user messages
+    fn render_deepseek_system_message_template(&self) -> Result<String> {
+        // DeepSeek format includes system prompt at the beginning
+        Ok("<｜begin▁of▁sentence｜>%s<｜User｜>%s<｜Assistant｜>".to_string())
     }
 }
 

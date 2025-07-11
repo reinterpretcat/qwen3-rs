@@ -339,7 +339,7 @@ mod special_token_tests {
         vocab.insert("existing_token".to_string(), 1);
 
         exporter
-            .add_special_tokens_from_config(temp_dir.path(), &mut vocab)
+            .add_special_tokens_from_config(temp_dir.path(), &mut vocab, 0, 0)
             .unwrap();
 
         assert_eq!(vocab.len(), 3);
@@ -371,7 +371,7 @@ mod special_token_tests {
         vocab.insert("existing_token".to_string(), 1);
 
         exporter
-            .add_special_tokens_from_config(temp_dir.path(), &mut vocab)
+            .add_special_tokens_from_config(temp_dir.path(), &mut vocab, 0, 0)
             .unwrap();
 
         // Should still have only 1 token, no duplicates
@@ -390,7 +390,7 @@ mod special_token_tests {
         vocab.insert("existing_token".to_string(), 1);
 
         // Should succeed even without config file
-        let result = exporter.add_special_tokens_from_config(temp_dir.path(), &mut vocab);
+        let result = exporter.add_special_tokens_from_config(temp_dir.path(), &mut vocab, 0, 0);
 
         assert!(result.is_ok());
         assert_eq!(vocab.len(), 1);
@@ -415,7 +415,7 @@ mod special_token_tests {
         let mut vocab = HashMap::new();
         vocab.insert("existing_token".to_string(), 1);
 
-        let result = exporter.add_special_tokens_from_config(temp_dir.path(), &mut vocab);
+        let result = exporter.add_special_tokens_from_config(temp_dir.path(), &mut vocab, 0, 0);
 
         assert!(result.is_ok());
         assert_eq!(vocab.len(), 1); // No tokens added
@@ -517,7 +517,7 @@ mod load_token_data_tests {
         let mut file = File::create(&config_path)?;
         write!(file, "{config_data}")?;
 
-        let token_data = exporter.load_token_data(temp_dir.path()).unwrap();
+        let token_data = exporter.load_token_data(temp_dir.path(), 0, 0).unwrap();
 
         // Check vocabulary includes both regular and special tokens
         assert_eq!(token_data.vocab.len(), 4);
@@ -556,7 +556,7 @@ mod load_token_data_tests {
         let mut file = File::create(&tokenizer_path)?;
         write!(file, "{tokenizer_data}")?;
 
-        let token_data = exporter.load_token_data(temp_dir.path()).unwrap();
+        let token_data = exporter.load_token_data(temp_dir.path(), 0, 0).unwrap();
 
         // "very_long_token_name" has 20 characters
         assert_eq!(token_data.max_token_length, 20);
@@ -579,7 +579,7 @@ mod load_token_data_tests {
         let mut file = File::create(&tokenizer_path)?;
         write!(file, "{tokenizer_data}")?;
 
-        let token_data = exporter.load_token_data(temp_dir.path()).unwrap();
+        let token_data = exporter.load_token_data(temp_dir.path(), 0, 0).unwrap();
 
         assert_eq!(token_data.max_token_length, 0);
 

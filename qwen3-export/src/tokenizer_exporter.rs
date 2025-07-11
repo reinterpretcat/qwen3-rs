@@ -100,7 +100,7 @@ impl TokenizerExporter {
         bos_token_id: u32,
         eos_token_id: u32,
     ) -> Result<()> {
-        let token_data = self.load_token_data(model_path)?;
+        let token_data = self.load_token_data(model_path, bos_token_id, eos_token_id)?;
         let tokens_by_id = self.create_ordered_tokens(&token_data.vocab);
         let u2b_map = UnicodeToByteMap::new();
 
@@ -115,11 +115,16 @@ impl TokenizerExporter {
     }
 
     /// Load and process all token data
-    fn load_token_data(&self, model_path: &Path) -> Result<TokenData> {
+    fn load_token_data(
+        &self,
+        model_path: &Path,
+        bos_token_id: u32,
+        eos_token_id: u32,
+    ) -> Result<TokenData> {
         let tokenizer_data = self.load_tokenizer_json(model_path)?;
         let mut vocab = self.extract_vocabulary(&tokenizer_data)?;
 
-        self.add_special_tokens_from_config(model_path, &mut vocab)?;
+        self.add_special_tokens_from_config(model_path, &mut vocab, bos_token_id, eos_token_id)?;
 
         let merge_ranks = self.extract_merge_ranks(&tokenizer_data);
         let max_token_length = vocab.keys().map(|token| token.len()).max().unwrap_or(0) as u32;
@@ -267,6 +272,8 @@ impl TokenizerExporter {
         &self,
         model_path: &Path,
         vocab: &mut HashMap<String, u32>,
+        bos_token_id: u32,
+        eos_token_id: u32,
     ) -> Result<()> {
         let config_path = model_path.join(Self::TOKENIZER_CONFIG_FILE_NAME);
 
@@ -275,8 +282,15 @@ impl TokenizerExporter {
             return Ok(());
         }
 
+        info!("Analyzing special tokens from tokenizer_config.json");
+
         let config_data = self.load_json_file(&config_path)?;
 
+        // Add BOS and EOS tokens
+        self.extract_and_add_token(&config_data, "bos_token", bos_token_id, "BOS", vocab);
+        self.extract_and_add_token(&config_data, "eos_token", eos_token_id, "EOS", vocab);
+
+        // Add other special tokens from added_tokens_decoder
         let added_count = config_data
             .pointer("/added_tokens_decoder")
             .and_then(|obj| obj.as_object())
@@ -300,12 +314,54 @@ impl TokenizerExporter {
             .unwrap_or(0);
 
         if added_count > 0 {
-            info!("🎯 Added {added_count} special tokens from tokenizer_config.json");
-        } else {
-            warn!("No added_tokens_decoder found in tokenizer_config.json");
+            info!("🎯 Added {added_count} additional special tokens from added_tokens_decoder");
         }
 
         Ok(())
+    }
+
+    /// Extract token content and add it to vocabulary if not already present
+    fn extract_and_add_token(
+        &self,
+        config_data: &Value,
+        token_field: &str,
+        token_id: u32,
+        token_type: &str,
+        vocab: &mut HashMap<String, u32>,
+    ) {
+        if token_id != 0 {
+            info!("⚠️ {token_type} token ID is not 0 ({token_id}), skipping");
+            return;
+        }
+
+        let token_path = format!("/{}", token_field);
+
+        if let Some(token_value) = config_data.pointer(&token_path) {
+            let token_content = token_value.as_str().map(str::to_owned).or_else(|| {
+                token_value
+                    .pointer("/content")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_owned)
+            });
+
+            if let Some(token_content) = token_content {
+                match vocab.entry(token_content.clone()) {
+                    std::collections::hash_map::Entry::Vacant(entry) => {
+                        entry.insert(token_id);
+                        info!(
+                            "🎯 Added {} token '{}' with ID {}",
+                            token_type, token_content, token_id
+                        );
+                    }
+                    std::collections::hash_map::Entry::Occupied(_) => {
+                        info!(
+                            "{} token '{}' already exists in vocabulary",
+                            token_type, token_content
+                        );
+                    }
+                }
+            }
+        }
     }
 
     /// Load and parse a JSON file
