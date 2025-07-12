@@ -40,7 +40,7 @@ git clone https://huggingface.co/Qwen/Qwen3-0.6B
 ```bash
 cargo build --release -p qwen3-cli
 
-# Export a HuggingFace model to binary format
+# Export a HuggingFace model to quantized checkpoint format
 cargo run --release -p qwen3-cli -- export /path/to/model /path/to/output.bin --group-size 64
 ```
 

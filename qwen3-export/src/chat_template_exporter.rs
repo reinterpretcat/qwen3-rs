@@ -96,6 +96,7 @@ impl ChatTemplateExporter {
     }
 
     /// Analyze template to determine what capabilities it supports
+    /// A very basic analysis to detect template type and capabilities
     fn analyze_template_capabilities(&self, template: &str) -> TemplateCapabilities {
         let template_type = if template.contains("<|im_start|>") && template.contains("<|im_end|>")
         {
@@ -112,8 +113,8 @@ impl ChatTemplateExporter {
                 template.contains("system") && template.contains("messages[0].role"),
             ),
             TemplateType::DeepSeek => (
-                false,                              // DeepSeek template doesn't have enable_thinking parameter
-                template.contains("system_prompt"), // DeepSeek handles system messages differently
+                template.contains("think"),
+                template.contains("system_prompt"),
             ),
             TemplateType::Unknown => (false, false),
         };
@@ -255,9 +256,9 @@ impl ChatTemplateExporter {
             }
             TemplateType::DeepSeek => {
                 if config.has_system {
-                    self.render_deepseek_system_message_template()
+                    self.render_deepseek_system_message_template(config.enable_thinking)
                 } else {
-                    self.render_deepseek_single_message_template()
+                    self.render_deepseek_single_message_template(config.enable_thinking)
                 }
             }
             TemplateType::Unknown => Err(anyhow::anyhow!(
@@ -288,16 +289,21 @@ impl ChatTemplateExporter {
     }
 
     /// Render DeepSeek template for single user message
-    fn render_deepseek_single_message_template(&self) -> Result<String> {
-        // DeepSeek format: <｜begin▁of▁sentence｜>system_prompt<｜User｜>user_content<｜Assistant｜>
-        // For single message, no system prompt
-        Ok("<｜begin▁of▁sentence｜><｜User｜>%s<｜Assistant｜>".to_string())
+    fn render_deepseek_single_message_template(&self, enable_thinking: bool) -> Result<String> {
+        if enable_thinking {
+            Ok("<｜User｜>%s<｜Assistant｜>".to_string())
+        } else {
+            Ok("<｜User｜>%s<｜Assistant｜><think>\n</think>".to_string())
+        }
     }
 
     /// Render DeepSeek template for system + user messages
-    fn render_deepseek_system_message_template(&self) -> Result<String> {
-        // DeepSeek format includes system prompt at the beginning
-        Ok("<｜begin▁of▁sentence｜>%s<｜User｜>%s<｜Assistant｜>".to_string())
+    fn render_deepseek_system_message_template(&self, enable_thinking: bool) -> Result<String> {
+        if enable_thinking {
+            Ok("%s<｜User｜>%s<｜Assistant｜>".to_string())
+        } else {
+            Ok("%s<｜User｜>%s<｜Assistant｜><think>\n</think>".to_string())
+        }
     }
 }
 
