@@ -156,7 +156,7 @@ impl std::fmt::Debug for TokenEmbedding {
 /// RMS Layer Normalization - alternative to LayerNorm used in modern LLMs
 ///
 /// **Mathematical Formula**:
-/// ```
+/// ```text
 /// RMSNorm(x) = x / RMS(x) * γ
 /// where RMS(x) = sqrt(mean(x²) + ε)
 /// ```
@@ -335,7 +335,7 @@ impl std::fmt::Debug for Linear {
 /// - **Output Projection**: Final linear transformation
 ///
 /// **Attention Formula**:
-/// ```
+/// ```text
 /// Attention(Q,K,V) = softmax(QK^T / √d_k)V
 /// ```
 pub struct MultiHeadAttention {
@@ -562,7 +562,7 @@ impl std::fmt::Debug for FeedForward {
 ///
 /// **Architecture Pattern**: Pre-LayerNorm with residual connections
 /// **Structure**:
-/// ```
+/// ```text
 /// x = x + Attention(RMSNorm(x))
 /// x = x + FFN(RMSNorm(x))
 /// ```
