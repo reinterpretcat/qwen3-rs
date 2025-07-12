@@ -186,8 +186,8 @@ fn run_inference_command(matches: &ArgMatches) -> Result<()> {
 }
 
 fn execute_commands() -> Result<()> {
-    // Initialize logger with clean format (no timestamp/module prefix)
-    env_logger::Builder::from_default_env()
+    // Initialize logger with clean format (no timestamp/module prefix) and use info level by default
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .format(|buf, record| {
             use std::io::Write;
             writeln!(buf, "{}", record.args())

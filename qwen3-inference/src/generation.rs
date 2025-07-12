@@ -2,6 +2,7 @@ use crate::sampler::Sampler;
 use crate::tokenizer::Tokenizer;
 use crate::transformer::Transformer;
 use anyhow::Result;
+use log::info;
 use std::io::{self, Write};
 use std::time::Instant;
 
@@ -234,7 +235,7 @@ impl TokenMetrics {
             let duration = start_time.elapsed();
             if self.generated_count > 0 && duration.as_secs_f64() > 0.0 {
                 let tps = self.generated_count as f64 / duration.as_secs_f64();
-                println!(
+                info!(
                     "\n[Generated {} tokens in {:.2}s - {:.2} tokens/sec]",
                     self.generated_count,
                     duration.as_secs_f64(),
