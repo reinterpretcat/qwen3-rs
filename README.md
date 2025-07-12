@@ -32,6 +32,7 @@ git clone https://huggingface.co/Qwen/Qwen3-0.6B
 # Or try larger/alternative models:
 # git clone https://huggingface.co/Qwen/Qwen3-4B
 # git clone https://huggingface.co/Qwen/Qwen3-8B
+# git clone https://huggingface.co/deepseek-ai/DeepSeek-R1-0528-Qwen3-8B
 ```
 
 ### 2. Build and run the exporter

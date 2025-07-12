@@ -74,9 +74,6 @@ mod tokenizer_exporter_tests {
     use super::TokenizerExporter;
     use serde_json::json;
     use std::collections::HashMap;
-    use std::fs::File;
-    use std::io::Write;
-    use tempfile::TempDir;
 
     #[test]
     fn test_new_and_default() {
@@ -132,23 +129,6 @@ mod tokenizer_exporter_tests {
         assert_eq!(vocab.get("hello"), Some(&1));
         assert_eq!(vocab.get("world"), Some(&2));
         assert_eq!(vocab.get("test"), Some(&3));
-    }
-
-    #[test]
-    fn test_extract_vocabulary_alternative_format() {
-        let exporter = TokenizerExporter::new();
-        let tokenizer_data = json!({
-            "vocab": {
-                "token1": 10,
-                "token2": 20
-            }
-        });
-
-        let vocab = exporter.extract_vocabulary(&tokenizer_data).unwrap();
-
-        assert_eq!(vocab.len(), 2);
-        assert_eq!(vocab.get("token1"), Some(&10));
-        assert_eq!(vocab.get("token2"), Some(&20));
     }
 
     #[test]
@@ -215,59 +195,6 @@ mod tokenizer_exporter_tests {
 
         assert!(merge_ranks.is_empty());
     }
-
-    #[test]
-    fn test_load_json_file() -> std::io::Result<()> {
-        let exporter = TokenizerExporter::new();
-        let temp_dir = TempDir::new()?;
-        let json_path = temp_dir.path().join("test.json");
-
-        let test_data = json!({
-            "test": "value",
-            "number": 42
-        });
-
-        let mut file = File::create(&json_path)?;
-        write!(file, "{test_data}")?;
-
-        let loaded = exporter.load_json_file(&json_path).unwrap();
-
-        assert_eq!(loaded, test_data);
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_load_json_file_invalid() -> std::io::Result<()> {
-        let exporter = TokenizerExporter::new();
-        let temp_dir = TempDir::new()?;
-        let json_path = temp_dir.path().join("invalid.json");
-
-        let mut file = File::create(&json_path)?;
-        write!(file, "{{invalid json")?;
-
-        let result = exporter.load_json_file(&json_path);
-
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Failed to parse JSON")
-        );
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_load_json_file_missing() {
-        let exporter = TokenizerExporter::new();
-        let missing_path = std::path::Path::new("/non/existent/path.json");
-
-        let result = exporter.load_json_file(missing_path);
-
-        assert!(result.is_err());
-    }
 }
 
 /// Test token score calculation logic
@@ -291,136 +218,6 @@ mod token_score_tests {
         assert_eq!(rank_0_score, 0.0);
         assert!((rank_1_score - (-std::f32::consts::LN_2)).abs() < 0.001);
         assert!((rank_10_score - (-2.397895)).abs() < 0.001);
-    }
-}
-
-/// Test special token handling
-#[cfg(test)]
-mod special_token_tests {
-    use super::TokenizerExporter;
-    use serde_json::json;
-    use std::collections::HashMap;
-    use std::fs::File;
-    use std::io::Write;
-    use tempfile::TempDir;
-
-    #[test]
-    fn test_add_special_tokens_from_config() -> std::io::Result<()> {
-        let exporter = TokenizerExporter::new();
-        let temp_dir = TempDir::new()?;
-
-        // Create tokenizer_config.json
-        let config_data = json!({
-            "added_tokens_decoder": {
-                "100": {
-                    "content": "<special1>",
-                    "lstrip": false,
-                    "normalized": false,
-                    "rstrip": false,
-                    "single_word": false,
-                    "special": true
-                },
-                "101": {
-                    "content": "<special2>",
-                    "lstrip": false,
-                    "normalized": false,
-                    "rstrip": false,
-                    "single_word": false,
-                    "special": true
-                }
-            }
-        });
-
-        let config_path = temp_dir.path().join("tokenizer_config.json");
-        let mut file = File::create(&config_path)?;
-        write!(file, "{config_data}")?;
-
-        let mut vocab = HashMap::new();
-        vocab.insert("existing_token".to_string(), 1);
-
-        exporter
-            .add_special_tokens_from_config(temp_dir.path(), &mut vocab, 0, 0)
-            .unwrap();
-
-        assert_eq!(vocab.len(), 3);
-        assert_eq!(vocab.get("existing_token"), Some(&1));
-        assert_eq!(vocab.get("<special1>"), Some(&100));
-        assert_eq!(vocab.get("<special2>"), Some(&101));
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_add_special_tokens_no_duplicates() -> std::io::Result<()> {
-        let exporter = TokenizerExporter::new();
-        let temp_dir = TempDir::new()?;
-
-        let config_data = json!({
-            "added_tokens_decoder": {
-                "100": {
-                    "content": "existing_token"
-                }
-            }
-        });
-
-        let config_path = temp_dir.path().join("tokenizer_config.json");
-        let mut file = File::create(&config_path)?;
-        write!(file, "{config_data}")?;
-
-        let mut vocab = HashMap::new();
-        vocab.insert("existing_token".to_string(), 1);
-
-        exporter
-            .add_special_tokens_from_config(temp_dir.path(), &mut vocab, 0, 0)
-            .unwrap();
-
-        // Should still have only 1 token, no duplicates
-        assert_eq!(vocab.len(), 1);
-        assert_eq!(vocab.get("existing_token"), Some(&1)); // Original ID preserved
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_add_special_tokens_missing_config() -> std::io::Result<()> {
-        let exporter = TokenizerExporter::new();
-        let temp_dir = TempDir::new()?;
-
-        let mut vocab = HashMap::new();
-        vocab.insert("existing_token".to_string(), 1);
-
-        // Should succeed even without config file
-        let result = exporter.add_special_tokens_from_config(temp_dir.path(), &mut vocab, 0, 0);
-
-        assert!(result.is_ok());
-        assert_eq!(vocab.len(), 1);
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_add_special_tokens_empty_decoder() -> std::io::Result<()> {
-        let exporter = TokenizerExporter::new();
-        let temp_dir = TempDir::new()?;
-
-        let config_data = json!({
-            "other_field": "value"
-            // No added_tokens_decoder
-        });
-
-        let config_path = temp_dir.path().join("tokenizer_config.json");
-        let mut file = File::create(&config_path)?;
-        write!(file, "{config_data}")?;
-
-        let mut vocab = HashMap::new();
-        vocab.insert("existing_token".to_string(), 1);
-
-        let result = exporter.add_special_tokens_from_config(temp_dir.path(), &mut vocab, 0, 0);
-
-        assert!(result.is_ok());
-        assert_eq!(vocab.len(), 1); // No tokens added
-
-        Ok(())
     }
 }
 
@@ -487,6 +284,11 @@ mod load_token_data_tests {
 
         // Create tokenizer.json
         let tokenizer_data = json!({
+            "added_tokens": [
+                {
+                    "content": "<special>",
+                    "id": 100
+                }],
             "model": {
                 "vocab": {
                     "hello": 1,
@@ -504,20 +306,7 @@ mod load_token_data_tests {
         let mut file = File::create(&tokenizer_path)?;
         write!(file, "{tokenizer_data}")?;
 
-        // Create tokenizer_config.json with special tokens
-        let config_data = json!({
-            "added_tokens_decoder": {
-                "100": {
-                    "content": "<special>"
-                }
-            }
-        });
-
-        let config_path = temp_dir.path().join("tokenizer_config.json");
-        let mut file = File::create(&config_path)?;
-        write!(file, "{config_data}")?;
-
-        let token_data = exporter.load_token_data(temp_dir.path(), 0, 0).unwrap();
+        let token_data = exporter.load_token_data(temp_dir.path()).unwrap();
 
         // Check vocabulary includes both regular and special tokens
         assert_eq!(token_data.vocab.len(), 4);
@@ -556,7 +345,7 @@ mod load_token_data_tests {
         let mut file = File::create(&tokenizer_path)?;
         write!(file, "{tokenizer_data}")?;
 
-        let token_data = exporter.load_token_data(temp_dir.path(), 0, 0).unwrap();
+        let token_data = exporter.load_token_data(temp_dir.path()).unwrap();
 
         // "very_long_token_name" has 20 characters
         assert_eq!(token_data.max_token_length, 20);
@@ -579,7 +368,7 @@ mod load_token_data_tests {
         let mut file = File::create(&tokenizer_path)?;
         write!(file, "{tokenizer_data}")?;
 
-        let token_data = exporter.load_token_data(temp_dir.path(), 0, 0).unwrap();
+        let token_data = exporter.load_token_data(temp_dir.path()).unwrap();
 
         assert_eq!(token_data.max_token_length, 0);
 

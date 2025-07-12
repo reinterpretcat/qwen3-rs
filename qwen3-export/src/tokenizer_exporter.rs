@@ -4,7 +4,7 @@ mod tests;
 
 use anyhow::{Context, Result};
 use byteorder::{LittleEndian, WriteBytesExt};
-use log::{info, warn};
+use log::info;
 use serde_json::Value;
 use std::{
     collections::HashMap,
@@ -84,7 +84,6 @@ impl UnicodeToByteMap {
 
 impl TokenizerExporter {
     const TOKENIZER_FILE_NAME: &'static str = "tokenizer.json";
-    const TOKENIZER_CONFIG_FILE_NAME: &'static str = "tokenizer_config.json";
     const DEFAULT_SCORE: f32 = -1e6;
 
     /// Create a new TokenizerExporter
@@ -100,7 +99,7 @@ impl TokenizerExporter {
         bos_token_id: u32,
         eos_token_id: u32,
     ) -> Result<()> {
-        let token_data = self.load_token_data(model_path, bos_token_id, eos_token_id)?;
+        let token_data = self.load_token_data(model_path)?;
         let tokens_by_id = self.create_ordered_tokens(&token_data.vocab);
         let u2b_map = UnicodeToByteMap::new();
 
@@ -115,16 +114,9 @@ impl TokenizerExporter {
     }
 
     /// Load and process all token data
-    fn load_token_data(
-        &self,
-        model_path: &Path,
-        bos_token_id: u32,
-        eos_token_id: u32,
-    ) -> Result<TokenData> {
+    fn load_token_data(&self, model_path: &Path) -> Result<TokenData> {
         let tokenizer_data = self.load_tokenizer_json(model_path)?;
-        let mut vocab = self.extract_vocabulary(&tokenizer_data)?;
-
-        self.add_special_tokens_from_config(model_path, &mut vocab, bos_token_id, eos_token_id)?;
+        let vocab = self.extract_vocabulary(&tokenizer_data)?;
 
         let merge_ranks = self.extract_merge_ranks(&tokenizer_data);
         let max_token_length = vocab.keys().map(|token| token.len()).max().unwrap_or(0) as u32;
@@ -226,26 +218,41 @@ impl TokenizerExporter {
 
     /// Extract vocabulary from tokenizer data
     fn extract_vocabulary(&self, tokenizer_data: &Value) -> Result<HashMap<String, u32>> {
-        // Try standard format first: model.vocab
-        if let Some(vocab_obj) = tokenizer_data
+        // Extract vocabulary from model/vocab
+        let mut vocab: HashMap<String, u32> = if let Some(vocab_obj) = tokenizer_data
             .pointer("/model/vocab")
             .and_then(|v| v.as_object())
         {
-            return Ok(vocab_obj
+            vocab_obj
                 .iter()
                 .filter_map(|(token, id)| id.as_u64().map(|id| (token.clone(), id as u32)))
-                .collect());
+                .collect()
+        } else {
+            anyhow::bail!("Could not find vocabulary in tokenizer.json")
+        };
+
+        info!("📚 Found {} tokens in model/vocab", vocab.len());
+
+        // Add tokens from added_tokens array
+        if let Some(added_tokens) = tokenizer_data
+            .pointer("/added_tokens")
+            .and_then(|v| v.as_array())
+        {
+            for token_obj in added_tokens {
+                if let (Some(content), Some(id)) = (
+                    token_obj.pointer("/content").and_then(|v| v.as_str()),
+                    token_obj.pointer("/id").and_then(|v| v.as_u64()),
+                ) {
+                    vocab.insert(content.to_string(), id as u32);
+                }
+            }
+
+            info!("📝 Added {} tokens from added_tokens", added_tokens.len());
         }
 
-        // Try alternative format: direct vocab
-        if let Some(vocab_obj) = tokenizer_data.pointer("/vocab").and_then(|v| v.as_object()) {
-            return Ok(vocab_obj
-                .iter()
-                .filter_map(|(token, id)| id.as_u64().map(|id| (token.clone(), id as u32)))
-                .collect());
-        }
+        info!("📖 Total vocabulary size: {}", vocab.len());
 
-        anyhow::bail!("Could not find vocabulary in tokenizer.json")
+        Ok(vocab)
     }
 
     /// Extract merge ranks from tokenizer data
@@ -265,113 +272,6 @@ impl TokenizerExporter {
                     .collect()
             })
             .unwrap_or_default()
-    }
-
-    /// Add special tokens from tokenizer_config.json that transformers library includes
-    fn add_special_tokens_from_config(
-        &self,
-        model_path: &Path,
-        vocab: &mut HashMap<String, u32>,
-        bos_token_id: u32,
-        eos_token_id: u32,
-    ) -> Result<()> {
-        let config_path = model_path.join(Self::TOKENIZER_CONFIG_FILE_NAME);
-
-        if !config_path.exists() {
-            warn!("tokenizer_config.json not found, skipping special tokens");
-            return Ok(());
-        }
-
-        info!("Analyzing special tokens from tokenizer_config.json");
-
-        let config_data = self.load_json_file(&config_path)?;
-
-        // Add BOS and EOS tokens
-        self.extract_and_add_token(&config_data, "bos_token", bos_token_id, "BOS", vocab);
-        self.extract_and_add_token(&config_data, "eos_token", eos_token_id, "EOS", vocab);
-
-        // Add other special tokens from added_tokens_decoder
-        let added_count = config_data
-            .pointer("/added_tokens_decoder")
-            .and_then(|obj| obj.as_object())
-            .map(|added_tokens_obj| {
-                added_tokens_obj
-                    .iter()
-                    .filter_map(|(id_str, token_info)| {
-                        let id = id_str.parse::<u32>().ok()?;
-                        let content = token_info.pointer("/content")?.as_str()?;
-
-                        // Only add if not already in vocab (avoid duplicates)
-                        if !vocab.contains_key(content) {
-                            vocab.insert(content.to_string(), id);
-                            Some(())
-                        } else {
-                            None
-                        }
-                    })
-                    .count()
-            })
-            .unwrap_or(0);
-
-        if added_count > 0 {
-            info!("🎯 Added {added_count} additional special tokens from added_tokens_decoder");
-        }
-
-        Ok(())
-    }
-
-    /// Extract token content and add it to vocabulary if not already present
-    fn extract_and_add_token(
-        &self,
-        config_data: &Value,
-        token_field: &str,
-        token_id: u32,
-        token_type: &str,
-        vocab: &mut HashMap<String, u32>,
-    ) {
-        if token_id != 0 {
-            info!("⚠️ {token_type} token ID is not 0 ({token_id}), skipping");
-            return;
-        }
-
-        let token_path = format!("/{}", token_field);
-
-        if let Some(token_value) = config_data.pointer(&token_path) {
-            let token_content = token_value.as_str().map(str::to_owned).or_else(|| {
-                token_value
-                    .pointer("/content")
-                    .and_then(|v| v.as_str())
-                    .map(str::to_owned)
-            });
-
-            if let Some(token_content) = token_content {
-                match vocab.entry(token_content.clone()) {
-                    std::collections::hash_map::Entry::Vacant(entry) => {
-                        entry.insert(token_id);
-                        info!(
-                            "🎯 Added {} token '{}' with ID {}",
-                            token_type, token_content, token_id
-                        );
-                    }
-                    std::collections::hash_map::Entry::Occupied(_) => {
-                        info!(
-                            "{} token '{}' already exists in vocabulary",
-                            token_type, token_content
-                        );
-                    }
-                }
-            }
-        }
-    }
-
-    /// Load and parse a JSON file
-    fn load_json_file(&self, path: &Path) -> Result<Value> {
-        let mut file = File::open(path)?;
-        let mut contents = String::new();
-        file.read_to_string(&mut contents)?;
-
-        serde_json::from_str(&contents)
-            .with_context(|| format!("Failed to parse JSON from {}", path.display()))
     }
 }
 

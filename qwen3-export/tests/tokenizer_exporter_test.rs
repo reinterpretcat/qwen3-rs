@@ -16,13 +16,6 @@ fn create_tokenizer_file(temp_dir: &TempDir, tokenizer_data: &Value) -> std::io:
     Ok(())
 }
 
-fn create_config_file(temp_dir: &TempDir, config_data: &Value) -> std::io::Result<()> {
-    let config_path = temp_dir.path().join("tokenizer_config.json");
-    let mut file = File::create(&config_path)?;
-    write!(file, "{config_data}")?;
-    Ok(())
-}
-
 /// Test complete tokenizer export pipeline
 #[test]
 fn test_complete_tokenizer_export() -> std::io::Result<()> {
@@ -32,6 +25,26 @@ fn test_complete_tokenizer_export() -> std::io::Result<()> {
     // Create a complete tokenizer.json with vocabulary and merges
     // Include tokens that actually match the merge patterns to test score calculation
     let tokenizer_data = json!({
+         "added_tokens": [
+            {
+                "id": 100,
+                "content": "<|endoftext|>",
+                "lstrip": false,
+                "normalized": false,
+                "rstrip": false,
+                "single_word": false,
+                "special": true
+            },
+            {
+                "id": 101,
+                "content": "<|startoftext|>",
+                "lstrip": false,
+                "normalized": false,
+                "rstrip": false,
+                "single_word": false,
+                "special": true
+            }
+        ],
         "model": {
             "vocab": {
                 "hello": 1,
@@ -49,30 +62,6 @@ fn test_complete_tokenizer_export() -> std::io::Result<()> {
     });
 
     create_tokenizer_file(&temp_dir, &tokenizer_data)?;
-
-    // Create tokenizer_config.json with special tokens
-    let config_data = json!({
-        "added_tokens_decoder": {
-            "100": {
-                "content": "<|endoftext|>",
-                "lstrip": false,
-                "normalized": false,
-                "rstrip": false,
-                "single_word": false,
-                "special": true
-            },
-            "101": {
-                "content": "<|startoftext|>",
-                "lstrip": false,
-                "normalized": false,
-                "rstrip": false,
-                "single_word": false,
-                "special": true
-            }
-        }
-    });
-
-    create_config_file(&temp_dir, &config_data)?;
 
     // Export tokenizer
     let output_path = temp_dir.path().join("output");
@@ -308,50 +297,6 @@ fn test_export_missing_vocabulary() -> std::io::Result<()> {
     Ok(())
 }
 
-/// Test alternative vocabulary format support
-#[test]
-fn test_alternative_vocab_format() -> std::io::Result<()> {
-    let temp_dir = TempDir::new()?;
-    let exporter = TokenizerExporter::new();
-
-    // Use direct vocab format instead of model.vocab
-    let tokenizer_data = json!({
-        "vocab": {
-            "token1": 1,
-            "token2": 2
-        }
-    });
-
-    create_tokenizer_file(&temp_dir, &tokenizer_data)?;
-
-    let output_path = temp_dir.path().join("output");
-    let result = exporter.export_tokenizer(temp_dir.path(), &output_path, 0, 0);
-
-    assert!(result.is_ok());
-
-    // Verify the tokens were processed correctly
-    let tokenizer_output = output_path.with_extension("tokenizer");
-    assert!(tokenizer_output.exists());
-
-    let mut file = File::open(&tokenizer_output)?;
-
-    // Skip header
-    file.read_u32::<LittleEndian>()?;
-    file.read_u32::<LittleEndian>()?;
-    file.read_u32::<LittleEndian>()?;
-
-    // Should have 2 tokens
-    for _ in 0..2 {
-        let _score = file.read_f32::<LittleEndian>()?;
-        let token_length = file.read_u32::<LittleEndian>()? as usize;
-        let mut token_bytes = vec![0u8; token_length];
-        file.read_exact(&mut token_bytes)?;
-        assert!(!token_bytes.is_empty());
-    }
-
-    Ok(())
-}
-
 /// Test merge ranks processing and score calculation
 #[test]
 fn test_merge_ranks_and_scores() -> std::io::Result<()> {
@@ -439,58 +384,6 @@ fn test_large_vocabulary() -> std::io::Result<()> {
     let metadata = std::fs::metadata(&tokenizer_output)?;
     // Should be at least header (12 bytes) + 1000 tokens * (4 + 4 + token_length bytes)
     assert!(metadata.len() > 12 + 1000 * 8);
-
-    Ok(())
-}
-
-/// Test special token handling edge cases
-#[test]
-fn test_special_token_edge_cases() -> std::io::Result<()> {
-    let temp_dir = TempDir::new()?;
-    let exporter = TokenizerExporter::new();
-
-    let tokenizer_data = json!({
-        "model": {
-            "vocab": {
-                "regular": 1
-            }
-        }
-    });
-
-    create_tokenizer_file(&temp_dir, &tokenizer_data)?;
-
-    // Create config with malformed special tokens
-    let config_data = json!({
-        "added_tokens_decoder": {
-            "not_a_number": {
-                "content": "should_be_ignored"
-            },
-            "200": {
-                // Missing content field
-                "special": true
-            },
-            "201": {
-                "content": "valid_special"
-            }
-        }
-    });
-
-    create_config_file(&temp_dir, &config_data)?;
-
-    let output_path = temp_dir.path().join("output");
-    let result = exporter.export_tokenizer(temp_dir.path(), &output_path, 0, 0);
-
-    // Should succeed despite malformed entries
-    assert!(result.is_ok());
-
-    // Verify only valid tokens are included
-    let tokenizer_output = output_path.with_extension("tokenizer");
-    let mut file = File::open(&tokenizer_output)?;
-
-    let max_token_length = file.read_u32::<LittleEndian>()?;
-
-    // max_token_length should be 13 (length of "valid_special")
-    assert_eq!(max_token_length, 13);
 
     Ok(())
 }

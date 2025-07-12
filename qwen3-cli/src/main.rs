@@ -2,7 +2,7 @@ use std::path::Path;
 
 use anyhow::Result;
 use clap::{Arg, ArgMatches, Command};
-use log::{error, info};
+use log::{debug, error, info};
 use qwen3_export::{export_model, load_hf_config};
 use qwen3_inference::{InferenceConfigBuilder, run_inference};
 
@@ -156,6 +156,8 @@ fn run_export_command(matches: &ArgMatches) -> Result<()> {
     // Load model configuration
     info!("Loading model configuration...");
     let config = load_hf_config(model_path)?;
+
+    debug!("{config:#?}");
 
     // Create exporter and run the export
     export_model(model_path, output_path, config, group_size)?;
