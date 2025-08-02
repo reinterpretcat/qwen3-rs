@@ -14,12 +14,7 @@ pub(crate) struct ProgressTracker {
 
 impl ProgressTracker {
     pub fn new(total: usize, label: &str) -> Self {
-        Self {
-            total,
-            completed: AtomicUsize::new(0),
-            last_displayed: AtomicUsize::new(0),
-            label: label.to_string(),
-        }
+        Self { total, completed: AtomicUsize::new(0), last_displayed: AtomicUsize::new(0), label: label.to_string() }
     }
 
     pub fn set_current(&self, current: usize, description: Option<&str>) {
@@ -29,11 +24,7 @@ impl ProgressTracker {
         let last_percent = (last_displayed * 100) / self.total;
 
         // Update display every 1% or on key milestones
-        if current == 0
-            || percent > last_percent
-            || current >= self.total
-            || current - last_displayed >= 10
-        {
+        if current == 0 || percent > last_percent || current >= self.total || current - last_displayed >= 10 {
             self.last_displayed.store(current, Ordering::Relaxed);
             let bar_width = 30;
             let filled = (current * bar_width) / self.total;
@@ -78,16 +69,14 @@ mod tests {
         let mut data2 = vec![10, 20, 30, 40, 50, 60, 70, 80];
         let n_heads = 4;
 
-        data1
-            .par_chunks_mut(2)
-            .zip(data2.par_chunks_mut(2))
-            .zip((0..n_heads).into_par_iter())
-            .for_each(|((chunk1, chunk2), head_idx)| {
+        data1.par_chunks_mut(2).zip(data2.par_chunks_mut(2)).zip((0..n_heads).into_par_iter()).for_each(
+            |((chunk1, chunk2), head_idx)| {
                 for (a, b) in chunk1.iter_mut().zip(chunk2.iter_mut()) {
                     *a += head_idx;
                     *b += head_idx * 10;
                 }
-            });
+            },
+        );
 
         assert_eq!(data1, vec![1, 2, 4, 5, 7, 8, 10, 11]);
         assert_eq!(data2, vec![10, 20, 40, 50, 70, 80, 100, 110]);
@@ -104,10 +93,7 @@ mod tests {
         let head_dim = 8;
         let n_heads = 4;
 
-        let mut state = MockState {
-            att: vec![0.0; n_heads * seq_len],
-            xb: vec![0.0; n_heads * head_dim],
-        };
+        let mut state = MockState { att: vec![0.0; n_heads * seq_len], xb: vec![0.0; n_heads * head_dim] };
 
         state
             .att

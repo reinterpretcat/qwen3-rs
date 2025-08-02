@@ -56,11 +56,7 @@ pub struct NormWeightLayer<'a> {
 
 impl<'a> NormWeightLayer<'a> {
     pub const fn new(pattern: &'a str, layered: bool, is_required: bool) -> Self {
-        Self {
-            name: pattern,
-            layered,
-            is_required,
-        }
+        Self { name: pattern, layered, is_required }
     }
 }
 
@@ -72,11 +68,7 @@ pub struct WeightLayer<'a> {
 
 impl<'a> WeightLayer<'a> {
     pub fn new(tensor_name: String, component: &'a str, layer_idx: u32) -> Self {
-        Self {
-            tensor_name,
-            component,
-            layer_idx,
-        }
+        Self { tensor_name, component, layer_idx }
     }
 }
 
@@ -96,10 +88,7 @@ pub trait Architecture {
     fn weight_layers(&self) -> &[WeightLayer<'_>];
 }
 
-pub fn create_architecture<'a>(
-    model_info: &ModelInfo,
-    tensor_reader: &'a TensorReader,
-) -> Box<dyn Architecture + 'a> {
+pub fn create_architecture<'a>(model_info: &ModelInfo, tensor_reader: &'a TensorReader) -> Box<dyn Architecture + 'a> {
     match model_info.config.architecture {
         ArchitectureId::Qwen3ForCausalLM => Box::new(Qwen::new(model_info, tensor_reader)),
         ArchitectureId::LlamaForCausalLM => todo!("LlamaForCausalLM not yet implemented"),

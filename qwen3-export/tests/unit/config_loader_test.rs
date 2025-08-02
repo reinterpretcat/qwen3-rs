@@ -58,10 +58,7 @@ fn test_load_hf_config_invalid_json() -> Result<()> {
 
     let result = load_hf_config(&config_path);
     assert!(result.is_err());
-    assert_eq!(
-        result.unwrap_err().to_string(),
-        "Failed to parse config.json: expected value at line 1 column 1"
-    );
+    assert_eq!(result.unwrap_err().to_string(), "Failed to parse config.json: expected value at line 1 column 1");
 
     Ok(())
 }

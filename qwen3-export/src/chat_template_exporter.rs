@@ -66,17 +66,9 @@ impl ChatTemplateExporter {
         // Load chat template from tokenizer config - this is now required
         let chat_template = self
             .load_chat_template_from_model(model_path)
-            .with_context(|| {
-                format!(
-                    "Failed to load chat template from model at {}",
-                    model_path.display()
-                )
-            })?
+            .with_context(|| format!("Failed to load chat template from model at {}", model_path.display()))?
             .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "No chat template found in tokenizer_config.json at {}",
-                    model_path.display()
-                )
+                anyhow::anyhow!("No chat template found in tokenizer_config.json at {}", model_path.display())
             })?;
 
         // Analyze template capabilities
@@ -87,19 +79,13 @@ impl ChatTemplateExporter {
         info!("   Supports system: {}", capabilities.supports_system);
 
         self.export_dynamic_templates(output_path, &chat_template, &capabilities)
-            .with_context(|| {
-                format!(
-                    "Failed to export templates for model at {}",
-                    model_path.display()
-                )
-            })
+            .with_context(|| format!("Failed to export templates for model at {}", model_path.display()))
     }
 
     /// Analyze template to determine what capabilities it supports
     /// A very basic analysis to detect template type and capabilities
     fn analyze_template_capabilities(&self, template: &str) -> TemplateCapabilities {
-        let template_type = if template.contains("<|im_start|>") && template.contains("<|im_end|>")
-        {
+        let template_type = if template.contains("<|im_start|>") && template.contains("<|im_end|>") {
             TemplateType::Qwen3
         } else if template.contains("<｜User｜>") && template.contains("<｜Assistant｜>") {
             TemplateType::DeepSeek
@@ -112,18 +98,11 @@ impl ChatTemplateExporter {
                 template.contains("enable_thinking"),
                 template.contains("system") && template.contains("messages[0].role"),
             ),
-            TemplateType::DeepSeek => (
-                template.contains("think"),
-                template.contains("system_prompt"),
-            ),
+            TemplateType::DeepSeek => (template.contains("think"), template.contains("system_prompt")),
             TemplateType::Unknown => (false, false),
         };
 
-        TemplateCapabilities {
-            supports_thinking,
-            supports_system,
-            template_type,
-        }
+        TemplateCapabilities { supports_thinking, supports_system, template_type }
     }
 
     /// Get template configurations based on detected capabilities
@@ -180,22 +159,14 @@ impl ChatTemplateExporter {
             return Ok(None);
         }
 
-        let config_content =
-            std::fs::read_to_string(&tokenizer_config_path).with_context(|| {
-                format!(
-                    "Failed to read tokenizer config from {}",
-                    tokenizer_config_path.display()
-                )
-            })?;
+        let config_content = std::fs::read_to_string(&tokenizer_config_path)
+            .with_context(|| format!("Failed to read tokenizer config from {}", tokenizer_config_path.display()))?;
 
-        let config: Value = serde_json::from_str(&config_content)
-            .with_context(|| "Failed to parse tokenizer config JSON")?;
+        let config: Value =
+            serde_json::from_str(&config_content).with_context(|| "Failed to parse tokenizer config JSON")?;
 
         // Extract chat_template if it exists
-        Ok(config
-            .get("chat_template")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string()))
+        Ok(config.get("chat_template").and_then(|v| v.as_str()).map(|s| s.to_string()))
     }
 
     /// Export templates using the dynamic chat template from the model
@@ -216,25 +187,17 @@ impl ChatTemplateExporter {
         }
 
         template_configs.iter().try_for_each(|config| {
-            let template_content =
-                self.render_chat_template(chat_template, config, capabilities)?;
+            let template_content = self.render_chat_template(chat_template, config, capabilities)?;
             let template_path = format!("{}{}", output_path.display(), config.suffix);
 
             std::fs::write(&template_path, template_content)
                 .with_context(|| format!("Failed to write template to {template_path}"))?;
 
-            info!(
-                "📝 Written {} template: {template_path}",
-                config.description
-            );
+            info!("📝 Written {} template: {template_path}", config.description);
             Ok::<(), anyhow::Error>(())
         })?;
 
-        info!(
-            "💬 All prompt templates written to {}{}.*",
-            output_path.display(),
-            Self::TEMPLATE_EXTENSION
-        );
+        info!("💬 All prompt templates written to {}{}.*", output_path.display(), Self::TEMPLATE_EXTENSION);
         Ok(())
     }
 
@@ -261,9 +224,7 @@ impl ChatTemplateExporter {
                     self.render_deepseek_single_message_template(config.enable_thinking)
                 }
             }
-            TemplateType::Unknown => Err(anyhow::anyhow!(
-                "Unknown template type, cannot render templates"
-            )),
+            TemplateType::Unknown => Err(anyhow::anyhow!("Unknown template type, cannot render templates")),
         }
     }
 
@@ -272,10 +233,7 @@ impl ChatTemplateExporter {
         if enable_thinking {
             Ok("<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n".to_string())
         } else {
-            Ok(
-                "<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
-                    .to_string(),
-            )
+            Ok("<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n".to_string())
         }
     }
 

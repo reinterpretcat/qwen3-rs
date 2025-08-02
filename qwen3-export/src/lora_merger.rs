@@ -17,11 +17,7 @@ impl<'a> LoraMerger<'a> {
             anyhow::bail!("Invalid scaling factor: {scaling} (must be finite)");
         }
 
-        Ok(Self {
-            tensor_reader,
-            scaling,
-            rank,
-        })
+        Ok(Self { tensor_reader, scaling, rank })
     }
 
     /// Try to merge LoRA adapters with base weights
@@ -35,10 +31,7 @@ impl<'a> LoraMerger<'a> {
         let (lora_a, lora_b) = self.discover_and_load_lora_pairs(component, layer_idx)?;
 
         if let (Some(a), Some(b)) = (lora_a, lora_b) {
-            debug!(
-                "Merging LoRA adapters for {component} layer {layer_idx} with scaling {}",
-                self.scaling
-            );
+            debug!("Merging LoRA adapters for {component} layer {layer_idx} with scaling {}", self.scaling);
 
             // Merge LoRA: W = W_base + scaling * (B @ A)
             let merged = self.merge_lora_weights(base_weights, &a, &b)?;
@@ -59,10 +52,8 @@ impl<'a> LoraMerger<'a> {
         // Based on the actual tensor naming pattern:
         // Base: model.layers.{layer}.{component}.weight
 
-        let lora_a_name =
-            format!("base_model.model.model.layers.{layer_idx}.{component}.lora_A.weight");
-        let lora_b_name =
-            format!("base_model.model.model.layers.{layer_idx}.{component}.lora_B.weight");
+        let lora_a_name = format!("base_model.model.model.layers.{layer_idx}.{component}.lora_A.weight");
+        let lora_b_name = format!("base_model.model.model.layers.{layer_idx}.{component}.lora_B.weight");
 
         debug!("Looking for LoRA A: '{lora_a_name}'");
         let lora_a = self.tensor_reader.load_tensor(&lora_a_name)?;
@@ -166,18 +157,12 @@ impl<'a> LoraMerger<'a> {
 
         debug!(
             "LoRA merge complete: max_delta={max_abs_delta:.6}, avg_delta={avg_abs_delta:.6}, max_base={max_abs_base:.6}, avg_base={avg_abs_base:.6}, relative_change={:.3}%",
-            if avg_abs_base > 1e-12 {
-                (avg_abs_delta / avg_abs_base) * 100.0
-            } else {
-                0.0
-            }
+            if avg_abs_base > 1e-12 { (avg_abs_delta / avg_abs_base) * 100.0 } else { 0.0 }
         );
 
         // Final sanity checks
         if result.iter().any(|&x| !x.is_finite()) {
-            return Err(anyhow::anyhow!(
-                "Final result contains non-finite values after LoRA merge"
-            ));
+            return Err(anyhow::anyhow!("Final result contains non-finite values after LoRA merge"));
         }
 
         Ok(result)
@@ -185,29 +170,16 @@ impl<'a> LoraMerger<'a> {
 
     /// Calculate LoRA dimensions using the known rank from config
     /// Returns (in_features, out_features) or error if dimensions don't match
-    fn calculate_lora_dimensions(
-        &self,
-        base_len: usize,
-        a_len: usize,
-        b_len: usize,
-    ) -> Result<(usize, usize)> {
+    fn calculate_lora_dimensions(&self, base_len: usize, a_len: usize, b_len: usize) -> Result<(usize, usize)> {
         // With known rank, we can directly calculate dimensions
         // LoRA format: A: (rank, in_features), B: (out_features, rank)
 
         if a_len % self.rank != 0 {
-            anyhow::bail!(
-                "LoRA A tensor size ({}) is not divisible by rank ({})",
-                a_len,
-                self.rank
-            );
+            anyhow::bail!("LoRA A tensor size ({}) is not divisible by rank ({})", a_len, self.rank);
         }
 
         if b_len % self.rank != 0 {
-            anyhow::bail!(
-                "LoRA B tensor size ({}) is not divisible by rank ({})",
-                b_len,
-                self.rank
-            );
+            anyhow::bail!("LoRA B tensor size ({}) is not divisible by rank ({})", b_len, self.rank);
         }
 
         let in_features = a_len / self.rank;
@@ -222,9 +194,7 @@ impl<'a> LoraMerger<'a> {
         }
 
         if in_features == 0 || out_features == 0 {
-            anyhow::bail!(
-                "Invalid dimensions: in_features={in_features}, out_features={out_features}",
-            );
+            anyhow::bail!("Invalid dimensions: in_features={in_features}, out_features={out_features}",);
         }
 
         debug!(
@@ -236,12 +206,7 @@ impl<'a> LoraMerger<'a> {
     }
 
     /// Validate tensors before LoRA merge to catch potential numerical issues
-    fn validate_tensors_for_merge(
-        &self,
-        base: &[f32],
-        lora_a: &[f32],
-        lora_b: &[f32],
-    ) -> Result<()> {
+    fn validate_tensors_for_merge(&self, base: &[f32], lora_a: &[f32], lora_b: &[f32]) -> Result<()> {
         // Check for non-finite values in input tensors
         let base_has_invalid = base.par_iter().any(|&x| !x.is_finite());
         if base_has_invalid {
@@ -259,18 +224,9 @@ impl<'a> LoraMerger<'a> {
         }
 
         // Computation of maximum absolute values
-        let max_base = base
-            .par_iter()
-            .map(|&x| x.abs())
-            .reduce(|| 0.0f32, f32::max);
-        let max_a = lora_a
-            .par_iter()
-            .map(|&x| x.abs())
-            .reduce(|| 0.0f32, f32::max);
-        let max_b = lora_b
-            .par_iter()
-            .map(|&x| x.abs())
-            .reduce(|| 0.0f32, f32::max);
+        let max_base = base.par_iter().map(|&x| x.abs()).reduce(|| 0.0f32, f32::max);
+        let max_a = lora_a.par_iter().map(|&x| x.abs()).reduce(|| 0.0f32, f32::max);
+        let max_b = lora_b.par_iter().map(|&x| x.abs()).reduce(|| 0.0f32, f32::max);
 
         // Rough estimate of maximum possible delta magnitude
         let estimated_max_delta = max_a * max_b * self.scaling.abs();
@@ -294,17 +250,9 @@ impl<'a> LoraMerger<'a> {
     }
 
     /// Compute statistics for LoRA merge validation and logging using parallel processing
-    fn compute_merge_statistics(
-        &self,
-        base: &[f32],
-        result: &[f32],
-    ) -> Result<(f32, f32, f32, f32)> {
+    fn compute_merge_statistics(&self, base: &[f32], result: &[f32]) -> Result<(f32, f32, f32, f32)> {
         if base.len() != result.len() {
-            anyhow::bail!(
-                "Base and result tensor lengths don't match: {} vs {}",
-                base.len(),
-                result.len()
-            );
+            anyhow::bail!("Base and result tensor lengths don't match: {} vs {}", base.len(), result.len());
         }
 
         // Parallel computation of statistics using reduce operations

@@ -48,10 +48,7 @@ mod basic {
             let u2b_map = UnicodeToByteMap::new();
 
             // Test multi-character tokens
-            assert_eq!(
-                u2b_map.token_to_bytes("hello"),
-                vec![104, 101, 108, 108, 111]
-            );
+            assert_eq!(u2b_map.token_to_bytes("hello"), vec![104, 101, 108, 108, 111]);
             assert_eq!(u2b_map.token_to_bytes("ABC"), vec![65, 66, 67]);
         }
 
@@ -136,12 +133,7 @@ mod basic {
             let result = exporter.extract_vocabulary(&tokenizer_data);
 
             assert!(result.is_err());
-            assert!(
-                result
-                    .unwrap_err()
-                    .to_string()
-                    .contains("Could not find vocabulary")
-            );
+            assert!(result.unwrap_err().to_string().contains("Could not find vocabulary"));
         }
 
         #[test]
@@ -232,12 +224,7 @@ mod basic {
             let result = exporter.load_tokenizer_json(temp_dir.path());
 
             assert!(result.is_err());
-            assert!(
-                result
-                    .unwrap_err()
-                    .to_string()
-                    .contains("tokenizer.json not found")
-            );
+            assert!(result.unwrap_err().to_string().contains("tokenizer.json not found"));
         }
 
         #[test]
@@ -252,12 +239,7 @@ mod basic {
             let result = exporter.load_tokenizer_json(temp_dir.path());
 
             assert!(result.is_err());
-            assert!(
-                result
-                    .unwrap_err()
-                    .to_string()
-                    .contains("Failed to parse tokenizer.json")
-            );
+            assert!(result.unwrap_err().to_string().contains("Failed to parse tokenizer.json"));
 
             Ok(())
         }
@@ -493,9 +475,7 @@ mod advanced {
                 // Score matches (within floating point precision)
                 assert!((expected_score - score).abs() < 0.001);
             } else {
-                panic!(
-                    "Score mismatch for token '{expected_token}': expected {expected_score}, got {score}",
-                );
+                panic!("Score mismatch for token '{expected_token}': expected {expected_score}, got {score}",);
             }
 
             // Token should match expected (via Unicode mapping)
@@ -610,12 +590,7 @@ mod advanced {
         let result = exporter.export_tokenizer(temp_dir.path(), &output_path, 0, 0);
 
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("tokenizer.json not found")
-        );
+        assert!(result.unwrap_err().to_string().contains("tokenizer.json not found"));
     }
 
     /// Test error handling for invalid JSON
@@ -633,12 +608,7 @@ mod advanced {
         let result = exporter.export_tokenizer(temp_dir.path(), &output_path, 0, 0);
 
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Failed to parse tokenizer.json")
-        );
+        assert!(result.unwrap_err().to_string().contains("Failed to parse tokenizer.json"));
 
         Ok(())
     }
@@ -662,12 +632,7 @@ mod advanced {
         let result = exporter.export_tokenizer(temp_dir.path(), &output_path, 0, 0);
 
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Could not find vocabulary")
-        );
+        assert!(result.unwrap_err().to_string().contains("Could not find vocabulary"));
 
         Ok(())
     }

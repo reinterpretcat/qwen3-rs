@@ -97,12 +97,7 @@ mod basic {
         let result = exporter.quantize_q80(&weights);
 
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("multiple of group_size")
-        );
+        assert!(result.unwrap_err().to_string().contains("multiple of group_size"));
     }
 
     #[test]
@@ -301,10 +296,7 @@ mod advanced {
     #[test]
     fn test_invalid_configurations() {
         // Test with zero dimensions
-        let invalid_config1 = ModelConfig {
-            dim: 0,
-            ..create_test_config()
-        };
+        let invalid_config1 = ModelConfig { dim: 0, ..create_test_config() };
 
         // Constructor should handle this gracefully
         let exporter1 = BinaryModelExporter::new(invalid_config1, 4);
@@ -478,10 +470,7 @@ mod advanced {
         ];
 
         for (dim, requested, _expected_note) in test_cases {
-            let config = ModelConfig {
-                dim: dim as u32,
-                ..create_test_config()
-            };
+            let config = ModelConfig { dim: dim as u32, ..create_test_config() };
 
             let exporter = BinaryModelExporter::new(config, requested);
 
@@ -499,11 +488,7 @@ mod advanced {
             match result {
                 Ok(r) => {
                     assert!(!r.scales.is_empty(), "Should have at least one scale");
-                    assert_eq!(
-                        r.int8_data.len(),
-                        weights.len(),
-                        "Quantized data size should match input"
-                    );
+                    assert_eq!(r.int8_data.len(), weights.len(), "Quantized data size should match input");
                 }
                 Err(_) => {
                     // It's OK if quantization fails due to size mismatch - that's expected
@@ -541,10 +526,7 @@ mod advanced {
             let pos_val = result_sym.int8_data[i];
             let neg_val = result_sym.int8_data[i + 1];
             // They should have opposite signs and similar magnitudes
-            assert!(
-                pos_val > 0 && neg_val < 0,
-                "Values should have opposite signs"
-            );
+            assert!(pos_val > 0 && neg_val < 0, "Values should have opposite signs");
         }
 
         // Test case 4: Very small values

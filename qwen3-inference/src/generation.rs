@@ -84,14 +84,7 @@ pub fn chat(
                 break;
             }
             user_turn = false;
-        } else if handle_assistant_turn(
-            transformer,
-            tokenizer,
-            sampler,
-            &mut state,
-            &mut next_token,
-            &mut user_turn,
-        )? {
+        } else if handle_assistant_turn(transformer, tokenizer, sampler, &mut state, &mut next_token, &mut user_turn)? {
             continue; // Turn ended, continue to next iteration
         }
     }
@@ -192,16 +185,11 @@ fn get_user_input(stdin: &io::Stdin, pos: usize, cli_user_prompt: Option<&str>) 
     }
 }
 
-fn render_prompt(
-    pos: usize,
-    system_prompt: Option<&str>,
-    user_prompt: &str,
-    tokenizer: &Tokenizer,
-) -> String {
+fn render_prompt(pos: usize, system_prompt: Option<&str>, user_prompt: &str, tokenizer: &Tokenizer) -> String {
     match (pos, system_prompt) {
-        (0, Some(sys_prompt)) => tokenizer
-            .system_prompt_template
-            .replace("%s", &format!("{sys_prompt}\n{user_prompt}")),
+        (0, Some(sys_prompt)) => {
+            tokenizer.system_prompt_template.replace("%s", &format!("{sys_prompt}\n{user_prompt}"))
+        }
         _ => tokenizer.prompt_template.replace("%s", user_prompt),
     }
 }
@@ -214,10 +202,7 @@ struct TokenMetrics {
 
 impl TokenMetrics {
     fn new() -> Self {
-        Self {
-            start_time: None,
-            generated_count: 0,
-        }
+        Self { start_time: None, generated_count: 0 }
     }
 
     fn start_generation(&mut self) {
@@ -256,11 +241,7 @@ struct GenerationState {
 
 impl GenerationState {
     fn new(initial_token: usize) -> Self {
-        Self {
-            pos: 0,
-            token: initial_token,
-            metrics: TokenMetrics::new(),
-        }
+        Self { pos: 0, token: initial_token, metrics: TokenMetrics::new() }
     }
 
     fn reset(&mut self, initial_token: usize) {

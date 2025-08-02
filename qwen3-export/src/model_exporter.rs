@@ -39,15 +39,9 @@ impl BinaryModelExporter {
     pub fn new(config: ModelConfig, group_size: usize) -> Self {
         let optimal_group_size = Self::find_optimal_group_size(config.dim as usize, group_size);
         if optimal_group_size != group_size {
-            info!(
-                "Adjusted group size from {} to {} to fit hidden_dim {}",
-                group_size, optimal_group_size, config.dim
-            );
+            info!("Adjusted group size from {} to {} to fit hidden_dim {}", group_size, optimal_group_size, config.dim);
         }
-        Self {
-            config,
-            group_size: optimal_group_size,
-        }
+        Self { config, group_size: optimal_group_size }
     }
 
     /// Find optimal group size that divides hidden_dim and is reasonable
@@ -68,12 +62,7 @@ impl BinaryModelExporter {
     }
 
     /// Export binary model with quantized weights using streaming to minimize memory usage
-    pub fn export_binary_model(
-        &self,
-        model_path: &Path,
-        output_path: &Path,
-        model_info: &ModelInfo,
-    ) -> Result<()> {
+    pub fn export_binary_model(&self, model_path: &Path, output_path: &Path, model_info: &ModelInfo) -> Result<()> {
         let tensor_reader = TensorReader::new(model_path)?;
 
         #[cfg(debug_assertions)]
@@ -114,9 +103,7 @@ impl BinaryModelExporter {
     /// Quantize weights to Q8_0 format (symmetric int8, range [-127, 127])
     pub fn quantize_q80(&self, weights: &[f32]) -> Result<QuantizedWeight> {
         if weights.len() % self.group_size != 0 {
-            return Err(anyhow::anyhow!(
-                "Weight length is not a multiple of group_size"
-            ));
+            return Err(anyhow::anyhow!("Weight length is not a multiple of group_size"));
         }
 
         let num_groups = weights.len() / self.group_size;
@@ -133,11 +120,7 @@ impl BinaryModelExporter {
                 let group_max = group.iter().map(|&x| x.abs()).fold(0.0f32, f32::max);
 
                 // Calculate scaling factor
-                let scale = if group_max > 0.0 {
-                    group_max / 127.0
-                } else {
-                    1.0
-                };
+                let scale = if group_max > 0.0 { group_max / 127.0 } else { 1.0 };
 
                 // Quantize the group
                 let mut group_int8 = Vec::with_capacity(self.group_size);
@@ -174,11 +157,7 @@ impl BinaryModelExporter {
             max_error = max_error.max(group_error);
         }
 
-        Ok(QuantizedWeight {
-            int8_data,
-            scales,
-            max_error,
-        })
+        Ok(QuantizedWeight { int8_data, scales, max_error })
     }
 
     /// Write binary header
@@ -238,24 +217,18 @@ impl BinaryModelExporter {
             Ok(())
         };
 
-        architecture.norm_weight_layers().iter().try_for_each(
-            |&NormWeightLayer {
-                 name,
-                 layered,
-                 is_required,
-             }| {
-                if layered {
-                    for layer_idx in 0..self.config.n_layers {
-                        let layer_name = name.replace("{}", &layer_idx.to_string());
-                        write_fn(&layer_name, is_required)?;
-                    }
-                } else {
-                    write_fn(name, is_required)?;
+        architecture.norm_weight_layers().iter().try_for_each(|&NormWeightLayer { name, layered, is_required }| {
+            if layered {
+                for layer_idx in 0..self.config.n_layers {
+                    let layer_name = name.replace("{}", &layer_idx.to_string());
+                    write_fn(&layer_name, is_required)?;
                 }
+            } else {
+                write_fn(name, is_required)?;
+            }
 
-                Ok(())
-            },
-        )
+            Ok(())
+        })
     }
 
     /// Stream and quantize weights one by one to minimize memory usage (LoRA-aware)
@@ -277,17 +250,8 @@ impl BinaryModelExporter {
         weight_tensors.push((architecture.embed_tokens_layer().to_string(), None, None));
 
         // Then: layer weights
-        for WeightLayer {
-            tensor_name,
-            component,
-            layer_idx,
-        } in architecture.weight_layers()
-        {
-            weight_tensors.push((
-                tensor_name.clone(),
-                Some(component.to_string()),
-                Some(*layer_idx),
-            ));
+        for WeightLayer { tensor_name, component, layer_idx } in architecture.weight_layers() {
+            weight_tensors.push((tensor_name.clone(), Some(component.to_string()), Some(*layer_idx)));
         }
 
         // Then Classifier if not shared
@@ -296,11 +260,7 @@ impl BinaryModelExporter {
         }
 
         let lora_merger = if let ModelType::LoRA(lora_config) = model_type {
-            Some(LoraMerger::new(
-                tensor_reader,
-                lora_config.lora_alpha,
-                lora_config.r,
-            )?)
+            Some(LoraMerger::new(tensor_reader, lora_config.lora_alpha, lora_config.r)?)
         } else {
             None
         };
@@ -323,11 +283,9 @@ impl BinaryModelExporter {
                 if let (Some(lora_merger), Some(layer_idx), Some(component)) =
                     (lora_merger.as_ref(), layer_idx, tensor_type.as_ref())
                 {
-                    if let Some(merged_weights) = lora_merger.try_merge_lora_adapters(
-                        &weight_tensor,
-                        component,
-                        *layer_idx,
-                    )? {
+                    if let Some(merged_weights) =
+                        lora_merger.try_merge_lora_adapters(&weight_tensor, component, *layer_idx)?
+                    {
                         weight_tensor = merged_weights;
                     }
                 }
@@ -341,14 +299,8 @@ impl BinaryModelExporter {
                 let quantized = self.quantize_q80(&weight_tensor)?;
 
                 // Write quantized data using iterators
-                quantized
-                    .int8_data
-                    .iter()
-                    .try_for_each(|&value| writer.write_i8(value))?;
-                quantized
-                    .scales
-                    .iter()
-                    .try_for_each(|&scale| writer.write_f32::<LittleEndian>(scale))?;
+                quantized.int8_data.iter().try_for_each(|&value| writer.write_i8(value))?;
+                quantized.scales.iter().try_for_each(|&scale| writer.write_f32::<LittleEndian>(scale))?;
 
                 Ok(quantized.max_error)
             })
@@ -358,10 +310,7 @@ impl BinaryModelExporter {
 
         // Print overall max error
         let overall_max_error = max_errors.iter().fold(0.0f32, |acc, &x| acc.max(x));
-        info!(
-            "Quantized {} weight tensors to Q8_0 with max error: {overall_max_error:.8}",
-            weight_tensors.len()
-        );
+        info!("Quantized {} weight tensors to Q8_0 with max error: {overall_max_error:.8}", weight_tensors.len());
 
         Ok(())
     }
@@ -384,10 +333,6 @@ fn round_half_to_even(x: f32) -> f32 {
         rounded // Already even
     } else {
         // Make even by rounding toward zero
-        if x >= 0.0 {
-            rounded - 1.0
-        } else {
-            rounded + 1.0
-        }
+        if x >= 0.0 { rounded - 1.0 } else { rounded + 1.0 }
     }
 }

@@ -43,10 +43,7 @@ impl<'a> Qwen<'a> {
             })
             .collect();
 
-        Self {
-            weight_layers,
-            tensor_reader,
-        }
+        Self { weight_layers, tensor_reader }
     }
 }
 
@@ -67,19 +64,13 @@ impl<'a> Architecture for Qwen<'a> {
             (Some(lm_head_weights), Some(embed_weights)) => {
                 // Compare tensor values to determine if they're identical
                 lm_head_weights.len() == embed_weights.len()
-                    && lm_head_weights
-                        .iter()
-                        .zip(embed_weights.iter())
-                        .all(|(a, b)| (a - b).abs() < 1e-6)
+                    && lm_head_weights.iter().zip(embed_weights.iter()).all(|(a, b)| (a - b).abs() < 1e-6)
             }
             (None, Some(_)) => true, // No lm_head means shared
             _ => false,              // Missing embed_tokens is an error, but we'll handle it later
         };
 
-        Ok(HeaderInfo {
-            architecture_id: self.id() as u32,
-            shared_classifier,
-        })
+        Ok(HeaderInfo { architecture_id: self.id() as u32, shared_classifier })
     }
 
     fn norm_weight_layers(&self) -> &[NormWeightLayer<'_>] {

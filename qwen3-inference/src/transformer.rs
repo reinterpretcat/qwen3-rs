@@ -77,12 +77,7 @@ impl Transformer {
         self.final_norm.forward_inplace(&mut self.state.x);
 
         // Classification head
-        quantize(
-            &mut self.state.xq,
-            &self.state.x,
-            self.state.x.len(),
-            self.lm_head.group_size,
-        );
+        quantize(&mut self.state.xq, &self.state.x, self.state.x.len(), self.lm_head.group_size);
         self.lm_head.forward(&mut self.state.logits, &self.state.xq);
 
         &self.state.logits
@@ -101,10 +96,7 @@ impl std::fmt::Debug for Transformer {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 f.debug_list()
                     .entries(self.0.iter().take(1))
-                    .entry(&format_args!(
-                        "... and {} more",
-                        self.0.len().saturating_sub(1)
-                    ))
+                    .entry(&format_args!("... and {} more", self.0.len().saturating_sub(1)))
                     .finish()
             }
         }
@@ -131,10 +123,7 @@ pub struct TokenEmbedding {
 
 impl TokenEmbedding {
     pub fn new(embedding_table: Vec<f32>, dim: usize) -> Self {
-        Self {
-            embedding_table,
-            dim,
-        }
+        Self { embedding_table, dim }
     }
 
     pub fn forward(&self, token: usize, output: &mut [f32]) {
@@ -181,13 +170,9 @@ impl RMSNorm {
         let sum_of_squares = input.iter().map(|&x| x * x).sum::<f32>();
         let rms_norm_factor = 1.0f32 / ((sum_of_squares / input.len() as f32) + EPSILON).sqrt();
 
-        output
-            .iter_mut()
-            .zip(input.iter())
-            .zip(self.weight.iter())
-            .for_each(|((out, &inp), &w)| {
-                *out = w * (rms_norm_factor * inp);
-            });
+        output.iter_mut().zip(input.iter()).zip(self.weight.iter()).for_each(|((out, &inp), &w)| {
+            *out = w * (rms_norm_factor * inp);
+        });
     }
 
     pub fn forward_inplace(&self, x: &mut [f32]) {
@@ -204,9 +189,7 @@ impl RMSNorm {
 
 impl std::fmt::Debug for RMSNorm {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RMSNorm")
-            .field("dim", &self.weight.len())
-            .finish()
+        f.debug_struct("RMSNorm").field("dim", &self.weight.len()).finish()
     }
 }
 
@@ -248,24 +231,20 @@ impl RoPE {
         let head_dim_half = slice.len() / 2;
         let (first_half, second_half) = slice.split_at_mut(head_dim_half);
 
-        first_half
-            .iter_mut()
-            .zip(second_half.iter_mut())
-            .zip(freqs.iter())
-            .for_each(|((x, y), &(cos_freq, sin_freq))| {
+        first_half.iter_mut().zip(second_half.iter_mut()).zip(freqs.iter()).for_each(
+            |((x, y), &(cos_freq, sin_freq))| {
                 let x_val = *x;
                 let y_val = *y;
                 *x = x_val * cos_freq - y_val * sin_freq;
                 *y = x_val * sin_freq + y_val * cos_freq;
-            });
+            },
+        );
     }
 }
 
 impl std::fmt::Debug for RoPE {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RoPE")
-            .field("head_dim", &self.head_dim)
-            .finish()
+        f.debug_struct("RoPE").field("head_dim", &self.head_dim).finish()
     }
 }
 
@@ -283,29 +262,12 @@ pub struct Linear {
 }
 
 impl Linear {
-    pub fn new(
-        weight: QuantizedTensor,
-        in_features: usize,
-        out_features: usize,
-        group_size: usize,
-    ) -> Self {
-        Self {
-            weight,
-            in_features,
-            out_features,
-            group_size,
-        }
+    pub fn new(weight: QuantizedTensor, in_features: usize, out_features: usize, group_size: usize) -> Self {
+        Self { weight, in_features, out_features, group_size }
     }
 
     pub fn forward(&self, output: &mut [f32], input: &QuantizedTensor) {
-        crate::tensor::matmul(
-            output,
-            input,
-            &self.weight,
-            self.in_features,
-            self.out_features,
-            self.group_size,
-        );
+        crate::tensor::matmul(output, input, &self.weight, self.in_features, self.out_features, self.group_size);
     }
 }
 
@@ -386,10 +348,8 @@ impl MultiHeadAttention {
 
         // Compute Q, K, V projections
         self.wq.forward(&mut state.q, &state.xq);
-        self.wk
-            .forward(&mut state.key_cache[current_pos_offset..], &state.xq);
-        self.wv
-            .forward(&mut state.value_cache[current_pos_offset..], &state.xq);
+        self.wk.forward(&mut state.key_cache[current_pos_offset..], &state.xq);
+        self.wv.forward(&mut state.value_cache[current_pos_offset..], &state.xq);
 
         // Apply normalization and RoPE
         let rope_freqs = self.rope.compute_freqs(pos);
@@ -411,20 +371,18 @@ impl MultiHeadAttention {
             let q_slice = &mut state.q[q_range.clone()];
 
             state.temp_workspace[..self.head_dim].copy_from_slice(q_slice);
-            self.q_norm
-                .forward(q_slice, &state.temp_workspace[..self.head_dim]);
+            self.q_norm.forward(q_slice, &state.temp_workspace[..self.head_dim]);
             self.rope.apply(q_slice, rope_freqs);
         }
 
         // Process Key heads
         for head_idx in 0..self.n_kv_heads {
-            let k_range = current_pos_offset + head_idx * self.head_dim
-                ..current_pos_offset + (head_idx + 1) * self.head_dim;
+            let k_range =
+                current_pos_offset + head_idx * self.head_dim..current_pos_offset + (head_idx + 1) * self.head_dim;
             let k_slice = &mut state.key_cache[k_range];
 
             state.temp_workspace[..self.head_dim].copy_from_slice(k_slice);
-            self.k_norm
-                .forward(k_slice, &state.temp_workspace[..self.head_dim]);
+            self.k_norm.forward(k_slice, &state.temp_workspace[..self.head_dim]);
             self.rope.apply(k_slice, rope_freqs);
         }
     }
@@ -446,21 +404,17 @@ impl MultiHeadAttention {
                 let att_head = &mut att_slice[0..=pos];
 
                 // Vectorized dot product computation
-                att_head
-                    .iter_mut()
-                    .enumerate()
-                    .for_each(|(time_step, att_score)| {
-                        let k_cache_start =
-                            kv_cache_offset + time_step * kv_dim + kv_head_idx * self.head_dim;
-                        let k_cache_end = k_cache_start + self.head_dim;
+                att_head.iter_mut().enumerate().for_each(|(time_step, att_score)| {
+                    let k_cache_start = kv_cache_offset + time_step * kv_dim + kv_head_idx * self.head_dim;
+                    let k_cache_end = k_cache_start + self.head_dim;
 
-                        *att_score = state.q[q_range.clone()]
-                            .iter()
-                            .zip(&state.key_cache[k_cache_start..k_cache_end])
-                            .map(|(&q, &k)| q * k)
-                            .sum::<f32>()
-                            * attention_scale;
-                    });
+                    *att_score = state.q[q_range.clone()]
+                        .iter()
+                        .zip(&state.key_cache[k_cache_start..k_cache_end])
+                        .map(|(&q, &k)| q * k)
+                        .sum::<f32>()
+                        * attention_scale;
+                });
 
                 // Apply softmax
                 softmax(att_head);
@@ -468,8 +422,7 @@ impl MultiHeadAttention {
                 // Compute weighted sum of values
                 xb_slice.fill(0.0);
                 for time_step in 0..=pos {
-                    let v_cache_start =
-                        kv_cache_offset + time_step * kv_dim + kv_head_idx * self.head_dim;
+                    let v_cache_start = kv_cache_offset + time_step * kv_dim + kv_head_idx * self.head_dim;
                     let v_cache_end = v_cache_start + self.head_dim;
                     let attention_weight = att_head[time_step];
 
@@ -532,14 +485,10 @@ impl FeedForward {
         self.w3.forward(&mut state.hb2, &state.xq);
 
         // Apply SwiGLU activation
-        state
-            .hb
-            .iter_mut()
-            .zip(state.hb2.iter())
-            .for_each(|(gate_val, &linear_val)| {
-                let swish_output = *gate_val * (1.0f32 + (-*gate_val).exp()).recip();
-                *gate_val = swish_output * linear_val;
-            });
+        state.hb.iter_mut().zip(state.hb2.iter()).for_each(|(gate_val, &linear_val)| {
+            let swish_output = *gate_val * (1.0f32 + (-*gate_val).exp()).recip();
+            *gate_val = swish_output * linear_val;
+        });
 
         // Down projection
         quantize(&mut state.hq, &state.hb, state.hb.len(), self.w2.group_size);
@@ -595,61 +544,32 @@ impl TransformerBlock {
         feed_forward: FeedForward,
         layer_idx: usize,
     ) -> Self {
-        Self {
-            attn_norm,
-            attention,
-            ffn_norm,
-            feed_forward,
-            layer_idx,
-        }
+        Self { attn_norm, attention, ffn_norm, feed_forward, layer_idx }
     }
 
     fn forward(&self, pos: usize, state: &mut RunState) {
         // Attention block with residual connection
         self.attn_norm.forward(&mut state.xb, &state.x);
 
-        quantize(
-            &mut state.xq,
-            &state.xb,
-            state.xb.len(),
-            self.attention.wq.group_size,
-        );
+        quantize(&mut state.xq, &state.xb, state.xb.len(), self.attention.wq.group_size);
 
         self.attention.forward(pos, self.layer_idx, state);
 
-        quantize(
-            &mut state.xq,
-            &state.xb,
-            state.xb.len(),
-            self.attention.wo.group_size,
-        );
+        quantize(&mut state.xq, &state.xb, state.xb.len(), self.attention.wo.group_size);
         self.attention.wo.forward(&mut state.xb2, &state.xq);
 
         // Residual connection
-        state
-            .x
-            .iter_mut()
-            .zip(state.xb2.iter())
-            .for_each(|(x_val, &delta)| *x_val += delta);
+        state.x.iter_mut().zip(state.xb2.iter()).for_each(|(x_val, &delta)| *x_val += delta);
 
         // Feed-forward block with residual connection
         self.ffn_norm.forward(&mut state.xb, &state.x);
 
-        quantize(
-            &mut state.xq,
-            &state.xb,
-            state.xb.len(),
-            self.feed_forward.w1.group_size,
-        );
+        quantize(&mut state.xq, &state.xb, state.xb.len(), self.feed_forward.w1.group_size);
 
         self.feed_forward.forward(state);
 
         // Residual connection
-        state
-            .x
-            .iter_mut()
-            .zip(state.xb.iter())
-            .for_each(|(x_val, &delta)| *x_val += delta);
+        state.x.iter_mut().zip(state.xb.iter()).for_each(|(x_val, &delta)| *x_val += delta);
     }
 }
 
@@ -673,10 +593,7 @@ pub struct TransformerBuilder {
 
 impl TransformerBuilder {
     pub fn new(checkpoint_path: &str) -> Self {
-        Self {
-            checkpoint_path: checkpoint_path.to_string(),
-            ctx_length: None,
-        }
+        Self { checkpoint_path: checkpoint_path.to_string(), ctx_length: None }
     }
 
     pub fn with_ctx_length(mut self, ctx_length: Option<usize>) -> Self {
@@ -714,12 +631,7 @@ impl TransformerBuilder {
         let final_norm = RMSNorm::new(weights.rms_final_weight[..config.dim].to_vec());
 
         // Create language model head
-        let lm_head = Linear::new(
-            weights.wcls,
-            config.dim,
-            config.vocab_size,
-            config.group_size,
-        );
+        let lm_head = Linear::new(weights.wcls, config.dim, config.vocab_size, config.group_size);
 
         // Create token embedding
         let token_embedding = TokenEmbedding::new(weights.token_embedding_table, config.dim);
@@ -770,9 +682,7 @@ impl TransformerBuilder {
                 // SAFETY: we keep the mmap alive for the lifetime of the transformer
                 unsafe {
                     std::mem::transmute::<&[f32], &[f32]>(
-                        mapper
-                            .get_f32_slice($size)
-                            .with_context(|| format!("Failed to read {}", $field))?,
+                        mapper.get_f32_slice($size).with_context(|| format!("Failed to read {}", $field))?,
                     )
                 }
             };
@@ -845,13 +755,11 @@ impl TransformerBuilder {
         (0..n_tensors)
             .map(|i| {
                 // Read quantized values
-                let q_bytes = mapper
-                    .get_bytes(size_each)
-                    .with_context(|| format!("Failed to read quantized tensor {i} data"))?;
+                let q_bytes =
+                    mapper.get_bytes(size_each).with_context(|| format!("Failed to read quantized tensor {i} data"))?;
 
                 // Convert bytes to i8 (avoiding copy by using unsafe)
-                let q_slice =
-                    unsafe { std::slice::from_raw_parts(q_bytes.as_ptr() as *const i8, size_each) };
+                let q_slice = unsafe { std::slice::from_raw_parts(q_bytes.as_ptr() as *const i8, size_each) };
 
                 // Calculate and read scale factors
                 let s_len = size_each / group_size;
@@ -882,38 +790,24 @@ impl TransformerBuilder {
 
         // Attention normalization
         let attn_norm_start = layer_idx * dim;
-        let attn_norm =
-            RMSNorm::new(weights.rms_att_weight[attn_norm_start..attn_norm_start + dim].to_vec());
+        let attn_norm = RMSNorm::new(weights.rms_att_weight[attn_norm_start..attn_norm_start + dim].to_vec());
 
         // Query/Key normalization
         let qk_norm_start = layer_idx * head_dim;
-        let q_norm =
-            RMSNorm::new(weights.q_ln_weights[qk_norm_start..qk_norm_start + head_dim].to_vec());
-        let k_norm =
-            RMSNorm::new(weights.k_ln_weights[qk_norm_start..qk_norm_start + head_dim].to_vec());
+        let q_norm = RMSNorm::new(weights.q_ln_weights[qk_norm_start..qk_norm_start + head_dim].to_vec());
+        let k_norm = RMSNorm::new(weights.k_ln_weights[qk_norm_start..qk_norm_start + head_dim].to_vec());
 
         // Attention projections
-        let wq = Linear::new(
-            weights.wq[layer_idx].clone(),
-            dim,
-            all_heads_dim,
-            group_size,
-        );
+        let wq = Linear::new(weights.wq[layer_idx].clone(), dim, all_heads_dim, group_size);
         let wk = Linear::new(weights.wk[layer_idx].clone(), dim, kv_dim, group_size);
         let wv = Linear::new(weights.wv[layer_idx].clone(), dim, kv_dim, group_size);
-        let wo = Linear::new(
-            weights.wo[layer_idx].clone(),
-            all_heads_dim,
-            dim,
-            group_size,
-        );
+        let wo = Linear::new(weights.wo[layer_idx].clone(), all_heads_dim, dim, group_size);
 
         let attention = MultiHeadAttention::new(wq, wk, wv, wo, q_norm, k_norm, model_config);
 
         // FFN normalization
         let ffn_norm_start = layer_idx * dim;
-        let ffn_norm =
-            RMSNorm::new(weights.rms_ffn_weight[ffn_norm_start..ffn_norm_start + dim].to_vec());
+        let ffn_norm = RMSNorm::new(weights.rms_ffn_weight[ffn_norm_start..ffn_norm_start + dim].to_vec());
 
         // Feed-forward projections
         let w1 = Linear::new(weights.w1[layer_idx].clone(), dim, hidden_dim, group_size);
@@ -922,13 +816,7 @@ impl TransformerBuilder {
 
         let feed_forward = FeedForward::new(w1, w2, w3);
 
-        Ok(TransformerBlock::new(
-            attn_norm,
-            attention,
-            ffn_norm,
-            feed_forward,
-            layer_idx,
-        ))
+        Ok(TransformerBlock::new(attn_norm, attention, ffn_norm, feed_forward, layer_idx))
     }
 }
 

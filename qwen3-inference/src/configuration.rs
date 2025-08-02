@@ -77,11 +77,7 @@ pub fn read_config(mapper: &mut MemoryMapper) -> Result<ModelConfig> {
     let data = mapper.get_bytes(CONFIG_SIZE)?;
 
     if data.len() != CONFIG_SIZE {
-        anyhow::bail!(
-            "Insufficient data for config: need {} bytes, got {}",
-            CONFIG_SIZE,
-            data.len()
-        );
+        anyhow::bail!("Insufficient data for config: need {} bytes, got {}", CONFIG_SIZE, data.len());
     }
 
     let mut cursor = Cursor::new(data);
@@ -89,9 +85,7 @@ pub fn read_config(mapper: &mut MemoryMapper) -> Result<ModelConfig> {
     // Use a macro to reduce repetitive error handling
     macro_rules! read_i32 {
         ($field:literal) => {
-            cursor
-                .read_i32::<LittleEndian>()
-                .with_context(|| format!("Failed to read {}", $field))?
+            cursor.read_i32::<LittleEndian>().with_context(|| format!("Failed to read {}", $field))?
         };
     }
 
@@ -121,20 +115,12 @@ pub fn read_config(mapper: &mut MemoryMapper) -> Result<ModelConfig> {
 fn validate_config(config: &Config) -> Result<()> {
     match config.magic_number {
         CHECKPOINT_MAGIC => {}
-        actual => anyhow::bail!(
-            "Invalid checkpoint magic number: expected {:#x}, got {:#x}",
-            CHECKPOINT_MAGIC,
-            actual
-        ),
+        actual => anyhow::bail!("Invalid checkpoint magic number: expected {:#x}, got {:#x}", CHECKPOINT_MAGIC, actual),
     }
 
     match config.version {
         CHECKPOINT_VERSION => {}
-        actual => anyhow::bail!(
-            "Unsupported checkpoint version: expected {}, got {}",
-            CHECKPOINT_VERSION,
-            actual
-        ),
+        actual => anyhow::bail!("Unsupported checkpoint version: expected {}, got {}", CHECKPOINT_VERSION, actual),
     }
 
     // Validate positive dimensions

@@ -11,42 +11,21 @@ impl QuantizedTensor {
     // Create with owned data (for temporary/working tensors)
     pub fn new(size: usize, group_size: usize) -> Self {
         let scale_size = size / group_size;
-        Self {
-            q: Cow::Owned(vec![0; size]),
-            s: Cow::Owned(vec![0.0; scale_size]),
-        }
+        Self { q: Cow::Owned(vec![0; size]), s: Cow::Owned(vec![0.0; scale_size]) }
     }
 
     // Create from borrowed slices (for memory-mapped data)
     pub fn from_slices(q: &'static [i8], s: &'static [f32]) -> Self {
-        Self {
-            q: Cow::Borrowed(q),
-            s: Cow::Borrowed(s),
-        }
+        Self { q: Cow::Borrowed(q), s: Cow::Borrowed(s) }
     }
 }
 
-pub fn matmul(
-    xout: &mut [f32],
-    x: &QuantizedTensor,
-    w: &QuantizedTensor,
-    n: usize,
-    d: usize,
-    group_size: usize,
-) {
-    assert!(
-        xout.len() >= d,
-        "Output slice length must be at least d parameter: {} >= {}",
-        xout.len(),
-        d
-    );
+pub fn matmul(xout: &mut [f32], x: &QuantizedTensor, w: &QuantizedTensor, n: usize, d: usize, group_size: usize) {
+    assert!(xout.len() >= d, "Output slice length must be at least d parameter: {} >= {}", xout.len(), d);
 
-    xout.par_iter_mut()
-        .enumerate()
-        .take(d)
-        .for_each(|(i, out_val)| {
-            compute_matmul_row(out_val, x, w, i, n, group_size);
-        });
+    xout.par_iter_mut().enumerate().take(d).for_each(|(i, out_val)| {
+        compute_matmul_row(out_val, x, w, i, n, group_size);
+    });
 }
 
 #[inline]
@@ -91,11 +70,7 @@ fn compute_matmul_row(
 /// * `x` - Output buffer for dequantized values (must be at least as large as `qx.q`)
 /// * `group_size` - Number of elements per quantization group
 pub fn dequantize(qx: &QuantizedTensor, x: &mut [f32], group_size: usize) {
-    debug_assert_eq!(
-        x.len(),
-        qx.q.len(),
-        "Output buffer size must match quantized tensor size"
-    );
+    debug_assert_eq!(x.len(), qx.q.len(), "Output buffer size must match quantized tensor size");
     debug_assert_eq!(qx.s.len(), x.len() / group_size);
 
     for (i, &q_val) in qx.q.iter().enumerate() {
@@ -130,9 +105,7 @@ pub fn quantize(qx: &mut QuantizedTensor, x: &[f32], size: usize, group_size: us
         let group_end = group_start + group_size;
 
         // Find the maximum absolute value in the group
-        let wmax = x[group_start..group_end]
-            .iter()
-            .fold(0.0f32, |acc, &val| acc.max(val.abs()));
+        let wmax = x[group_start..group_end].iter().fold(0.0f32, |acc, &val| acc.max(val.abs()));
 
         let scale = wmax / Q_MAX;
         s_data[group] = scale;

@@ -98,12 +98,7 @@ impl InferenceConfigBuilder {
             prompt: self.prompt,
             system_prompt: self.system_prompt,
             enable_thinking: self.enable_thinking.unwrap_or(false),
-            seed: self.seed.unwrap_or_else(|| {
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs()
-            }),
+            seed: self.seed.unwrap_or_else(|| SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()),
         })
     }
 }
@@ -141,13 +136,7 @@ pub fn run_inference(inference_config: InferenceConfig) -> Result<()> {
     // Run
     match inference_config.mode.as_str() {
         "generate" => generate(&mut transformer, &tokenizer, &mut sampler, prompt),
-        "chat" => chat(
-            &mut transformer,
-            &tokenizer,
-            &mut sampler,
-            prompt,
-            system_prompt,
-        ),
+        "chat" => chat(&mut transformer, &tokenizer, &mut sampler, prompt, system_prompt),
         _ => anyhow::bail!("Unknown mode: {inference_config:?}"),
     }
 }
