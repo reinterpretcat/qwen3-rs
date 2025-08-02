@@ -10,12 +10,13 @@ const CHECKPOINT_MAGIC: i32 = 0x616a6331;
 const CHECKPOINT_VERSION: i32 = 1;
 /// Size of the checkpoint header in bytes
 const HEADER_SIZE: usize = 256;
-/// Size of config structure in bytes (12 i32 fields)
-const CONFIG_SIZE: usize = 48;
+/// Size of config structure in bytes (13 i32 fields)
+const CONFIG_SIZE: usize = 52;
 
 /// Configuration struct for transformer models.
 #[derive(Debug, Clone)]
 pub struct ModelConfig {
+    pub architecture_id: usize,
     pub dim: usize,
     pub hidden_dim: usize,
     pub n_layers: usize,
@@ -33,6 +34,7 @@ pub struct ModelConfig {
 struct Config {
     pub magic_number: i32,
     pub version: i32,
+    pub architecture_id: i32,
     pub dim: i32,
     pub hidden_dim: i32,
     pub n_layers: i32,
@@ -52,6 +54,7 @@ impl TryInto<ModelConfig> for Config {
         validate_config(&self).with_context(|| "Invalid model configuration")?;
 
         Ok(ModelConfig {
+            architecture_id: self.architecture_id as usize,
             dim: self.dim as usize,
             hidden_dim: self.hidden_dim as usize,
             n_layers: self.n_layers as usize,
@@ -95,6 +98,7 @@ pub fn read_config(mapper: &mut MemoryMapper) -> Result<ModelConfig> {
     let config = Config {
         magic_number: read_i32!("magic number"),
         version: read_i32!("version"),
+        architecture_id: read_i32!("architecture id"),
         dim: read_i32!("dimension"),
         hidden_dim: read_i32!("hidden dimension"),
         n_layers: read_i32!("number of layers"),
@@ -135,6 +139,7 @@ fn validate_config(config: &Config) -> Result<()> {
 
     // Validate positive dimensions
     let dimensions = [
+        ("architecture_id", config.architecture_id),
         ("dim", config.dim),
         ("n_layers", config.n_layers),
         ("n_heads", config.n_heads),

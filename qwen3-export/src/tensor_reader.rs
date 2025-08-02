@@ -12,7 +12,7 @@ use std::{
 
 /// Memory-efficient tensor reader from SafeTensors files
 #[derive(Debug)]
-pub(crate) struct TensorReader {
+pub struct TensorReader {
     safetensors_files: Vec<PathBuf>,   // Just store file paths, not data
     mmap_cache: Arc<Mutex<MmapCache>>, // LRU cache for memory mappings
 }

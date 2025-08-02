@@ -8,6 +8,7 @@ use tempfile::TempDir;
 /// Helper to create a minimal config.json for testing
 fn create_test_config_json(temp_dir: &TempDir) -> Result<PathBuf> {
     let config_content = r#"{
+        "architectures": ["Qwen3ForCausalLM"],
         "hidden_size": 256,
         "intermediate_size": 1024,
         "num_hidden_layers": 4,
@@ -94,6 +95,7 @@ fn test_load_hf_config_with_defaults() -> Result<()> {
 
     // Config without optional fields (bos_token_id, eos_token_id, head_dim)
     let config_content = r#"{
+        "architectures": ["Qwen3ForCausalLM"],
         "hidden_size": 256,
         "intermediate_size": 1024,
         "num_hidden_layers": 4,
@@ -113,44 +115,6 @@ fn test_load_hf_config_with_defaults() -> Result<()> {
     assert_eq!(config.bos_token_id, 0); // default
     assert_eq!(config.eos_token_id, 0); // default
     assert_eq!(config.head_dim, 256 / 8); // calculated: dim / n_heads
-
-    Ok(())
-}
-
-#[test]
-fn test_config_serialization() -> Result<()> {
-    let config = ModelConfig {
-        architectures: vec!["Qwen3ForCausalLM".to_string()],
-        dim: 128,
-        hidden_dim: 512,
-        n_layers: 2,
-        n_heads: 4,
-        n_kv_heads: 4,
-        vocab_size: 500,
-        max_seq_len: 256,
-        head_dim: 32,
-        norm_eps: 1e-5,
-        bos_token_id: 1,
-        eos_token_id: 2,
-    };
-
-    // Test that config can be serialized and deserialized
-    let json = serde_json::to_string(&config)?;
-    let deserialized: ModelConfig = serde_json::from_str(&json)?;
-
-    // Verify all fields match
-    assert_eq!(config.architectures, deserialized.architectures);
-    assert_eq!(config.dim, deserialized.dim);
-    assert_eq!(config.hidden_dim, deserialized.hidden_dim);
-    assert_eq!(config.n_layers, deserialized.n_layers);
-    assert_eq!(config.n_heads, deserialized.n_heads);
-    assert_eq!(config.n_kv_heads, deserialized.n_kv_heads);
-    assert_eq!(config.vocab_size, deserialized.vocab_size);
-    assert_eq!(config.max_seq_len, deserialized.max_seq_len);
-    assert_eq!(config.head_dim, deserialized.head_dim);
-    assert!((config.norm_eps - deserialized.norm_eps).abs() < 1e-9);
-    assert_eq!(config.bos_token_id, deserialized.bos_token_id);
-    assert_eq!(config.eos_token_id, deserialized.eos_token_id);
 
     Ok(())
 }

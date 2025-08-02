@@ -2,7 +2,7 @@
 target/
 DeepSeek*
 Qwen3-*
-models/
+.models
 
 notes.log
 

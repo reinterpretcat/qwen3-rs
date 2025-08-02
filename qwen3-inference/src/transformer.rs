@@ -745,6 +745,7 @@ impl TransformerBuilder {
     /// 5. Classification weights (quantized, may be shared)
     fn load_weights(mapper: &mut MemoryMapper, config: &ModelConfig) -> Result<TransformerWeights> {
         let ModelConfig {
+            architecture_id,
             group_size,
             dim,
             n_layers,
@@ -756,6 +757,9 @@ impl TransformerBuilder {
             shared_classifier,
             ..
         } = *config;
+
+        // TODO: Validate architecture ID against expected value
+        let _ = architecture_id;
 
         let all_heads_dim = n_heads * head_dim;
         let kv_dim = n_kv_heads * head_dim;

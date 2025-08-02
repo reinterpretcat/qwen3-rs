@@ -24,6 +24,7 @@
 pub mod chat_template_exporter;
 pub mod config_loader;
 pub mod model_exporter;
+pub mod models;
 pub mod tensor_reader;
 pub mod tokenizer_exporter;
 mod utils;

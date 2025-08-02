@@ -12,9 +12,13 @@ use std::{
     path::Path,
 };
 
-use crate::tensor_reader::TensorReader;
+use crate::models::{HeaderInfo, WeightLayer};
 use crate::utils::ProgressTracker;
 use crate::{ModelConfig, ModelInfo, ModelType};
+use crate::{
+    models::{Architecture, NormWeightLayer, create_architecture},
+    tensor_reader::TensorReader,
+};
 
 // Quantization result
 #[derive(Debug)]
@@ -22,12 +26,6 @@ pub struct QuantizedWeight {
     pub int8_data: Vec<i8>,
     pub scales: Vec<f32>,
     pub max_error: f32,
-}
-
-/// Header information structure (lightweight)
-#[derive(Debug)]
-struct HeaderInfo {
-    pub shared_classifier: bool,
 }
 
 /// Binary model exporter for quantized model weights
@@ -42,34 +40,6 @@ impl BinaryModelExporter {
     const HEADER_SIZE: usize = 256;
     const MIN_GROUP_SIZE: usize = 4;
 
-    // Tensor name constants
-    const EMBED_TOKENS_KEY: &'static str = "model.embed_tokens.weight";
-    const LM_HEAD_KEY: &'static str = "lm_head.weight";
-    const FINAL_NORM_KEY: &'static str = "model.norm.weight";
-
-    // Qwen3 model layer weight component names (without .weight suffix)
-    const QWEN3_LAYER_COMPONENTS: &'static [&'static str] = &[
-        "self_attn.q_proj",
-        "self_attn.k_proj",
-        "self_attn.v_proj",
-        "self_attn.o_proj",
-        "mlp.gate_proj",
-        "mlp.down_proj",
-        "mlp.up_proj",
-    ];
-
-    /// Find optimal group size that divides hidden_dim and is reasonable
-    fn find_optimal_group_size(hidden_dim: usize, requested_size: usize) -> usize {
-        let mut size = requested_size.min(hidden_dim);
-
-        // Find largest size that divides hidden_dim
-        while size >= Self::MIN_GROUP_SIZE && hidden_dim % size != 0 {
-            size /= 2;
-        }
-
-        size.max(Self::MIN_GROUP_SIZE)
-    }
-
     pub fn new(config: ModelConfig, group_size: usize) -> Self {
         let optimal_group_size = Self::find_optimal_group_size(config.dim as usize, group_size);
         if optimal_group_size != group_size {
@@ -82,6 +52,18 @@ impl BinaryModelExporter {
             config,
             group_size: optimal_group_size,
         }
+    }
+
+    /// Find optimal group size that divides hidden_dim and is reasonable
+    fn find_optimal_group_size(hidden_dim: usize, requested_size: usize) -> usize {
+        let mut size = requested_size.min(hidden_dim);
+
+        // Find largest size that divides hidden_dim
+        while size >= Self::MIN_GROUP_SIZE && hidden_dim % size != 0 {
+            size /= 2;
+        }
+
+        size.max(Self::MIN_GROUP_SIZE)
     }
 
     /// Create exporter from ModelInfo (recommended for new code)
@@ -104,35 +86,21 @@ impl BinaryModelExporter {
         let file = File::create(output_path)?;
         let mut writer = BufWriter::new(file);
 
-        // Check if classifier is shared by comparing tensor values (like Python)
-        let shared_classifier = match (
-            tensor_reader.load_tensor(Self::LM_HEAD_KEY)?,
-            tensor_reader.load_tensor(Self::EMBED_TOKENS_KEY)?,
-        ) {
-            (Some(lm_head_weights), Some(embed_weights)) => {
-                // Compare tensor values to determine if they're identical
-                lm_head_weights.len() == embed_weights.len()
-                    && lm_head_weights
-                        .iter()
-                        .zip(embed_weights.iter())
-                        .all(|(a, b)| (a - b).abs() < 1e-6)
-            }
-            (None, Some(_)) => true, // No lm_head means shared
-            _ => false,              // Missing embed_tokens is an error, but we'll handle it later
-        };
-        let header_info = HeaderInfo { shared_classifier };
+        let architecture = create_architecture(model_info, &tensor_reader);
+        let header_info = architecture.header()?;
 
         // Write header (256 bytes)
         self.write_header(&mut writer, &header_info)?;
 
         // Write normalization weights (fp32) - these are small
-        self.write_norm_weights(&mut writer, &tensor_reader)?;
+        self.write_norm_weights(architecture.as_ref(), &mut writer, &tensor_reader)?;
 
         // Stream and quantize weights one by one
         self.stream_and_quantize_weights(
+            architecture.as_ref(),
             &mut writer,
             &tensor_reader,
-            shared_classifier,
+            header_info.shared_classifier,
             &model_info.model_type,
         )?;
 
@@ -226,6 +194,7 @@ impl BinaryModelExporter {
         writer.write_i32::<LittleEndian>(Self::VERSION)?;
 
         // Model parameters (10 int32 values)
+        writer.write_u32::<LittleEndian>(header_info.architecture_id as u32)?;
         writer.write_u32::<LittleEndian>(self.config.dim)?;
         writer.write_u32::<LittleEndian>(self.config.hidden_dim)?;
         writer.write_u32::<LittleEndian>(self.config.n_layers)?;
@@ -238,7 +207,7 @@ impl BinaryModelExporter {
         writer.write_u32::<LittleEndian>(self.group_size as u32)?;
 
         // Pad to header size
-        let current_pos = 4 + 4 + 10 * 4; // magic + version + 10 params
+        let current_pos = 4 + 4 + 4 + 10 * 4; // magic + version + architecture_id + 10 params
         let padding = Self::HEADER_SIZE - current_pos;
         let zeros = vec![0u8; padding];
         writer.write_all(&zeros)?;
@@ -246,78 +215,51 @@ impl BinaryModelExporter {
         Ok(())
     }
 
-    /// Write normalization weights (fp32)
+    /// Write normalization weights (fp32).
     fn write_norm_weights<W: Write>(
         &self,
+        architecture: &dyn Architecture,
         writer: &mut W,
         tensor_reader: &TensorReader,
     ) -> Result<()> {
         info!("Writing normalization weights...");
 
-        // Attention norms
-        for layer_idx in 0..self.config.n_layers {
-            let attn_norm_key = format!("model.layers.{}.input_layernorm.weight", layer_idx);
-            if let Some(attn_norm) = tensor_reader.load_tensor(&attn_norm_key)? {
-                for &value in &attn_norm {
-                    writer.write_f32::<LittleEndian>(value)?;
+        let mut write_fn = |tensor_name: &str, is_required| -> Result<()> {
+            match (tensor_reader.load_tensor(tensor_name)?, is_required) {
+                (Some(attn_norm), _) => {
+                    for &value in &attn_norm {
+                        writer.write_f32::<LittleEndian>(value)?;
+                    }
                 }
-            } else {
-                return Err(anyhow::anyhow!("Missing weight: {}", attn_norm_key));
+                (None, false) => {
+                    for _ in 0..self.config.head_dim as usize {
+                        writer.write_f32::<LittleEndian>(1.0)?;
+                    }
+                }
+                (None, true) => anyhow::bail!("Missing weight for tensor_name: '{tensor_name}'"),
             }
-        }
 
-        // FFN norms
-        for layer_idx in 0..self.config.n_layers {
-            let ffn_norm_key =
-                format!("model.layers.{}.post_attention_layernorm.weight", layer_idx);
-            if let Some(ffn_norm) = tensor_reader.load_tensor(&ffn_norm_key)? {
-                for &value in &ffn_norm {
-                    writer.write_f32::<LittleEndian>(value)?;
-                }
-            } else {
-                return Err(anyhow::anyhow!("Missing weight: {}", ffn_norm_key));
-            }
-        }
+            Ok(())
+        };
 
-        // Final norm
-        if let Some(final_norm) = tensor_reader.load_tensor(Self::FINAL_NORM_KEY)? {
-            for &value in &final_norm {
-                writer.write_f32::<LittleEndian>(value)?;
-            }
-        } else {
-            return Err(anyhow::anyhow!("Missing final norm"));
-        }
+        architecture.norm_weight_layers().iter().try_for_each(
+            |&NormWeightLayer {
+                 name,
+                 layered,
+                 is_required,
+             }| {
+                if layered {
+                    for layer_idx in 0..self.config.n_layers {
+                        let layer_name = name.replace("{}", &layer_idx.to_string());
+                        write_fn(&layer_name, is_required)?;
+                    }
+                } else {
+                    write_fn(name, is_required)?;
+                }
 
-        // QK LayerNorm weights (Qwen3 specific)
-        for layer_idx in 0..self.config.n_layers {
-            let lq_key = format!("model.layers.{}.self_attn.q_norm.weight", layer_idx);
-            if let Some(lq) = tensor_reader.load_tensor(&lq_key)? {
-                for &value in &lq {
-                    writer.write_f32::<LittleEndian>(value)?;
-                }
-            } else {
-                // Default to ones if not present
-                for _ in 0..self.config.head_dim as usize {
-                    writer.write_f32::<LittleEndian>(1.0)?;
-                }
-            }
-        }
-
-        for layer_idx in 0..self.config.n_layers {
-            let lk_key = format!("model.layers.{}.self_attn.k_norm.weight", layer_idx);
-            if let Some(lk) = tensor_reader.load_tensor(&lk_key)? {
-                for &value in &lk {
-                    writer.write_f32::<LittleEndian>(value)?;
-                }
-            } else {
-                // Default to ones if not present
-                for _ in 0..self.config.head_dim as usize {
-                    writer.write_f32::<LittleEndian>(1.0)?;
-                }
-            }
-        }
-
-        Ok(())
+                Ok(())
+            },
+        )
     }
 
     /// Try to merge LoRA adapters with base weights
@@ -524,30 +466,38 @@ impl BinaryModelExporter {
     /// Stream and quantize weights one by one to minimize memory usage (LoRA-aware)
     fn stream_and_quantize_weights<W: Write>(
         &self,
+        architecture: &dyn Architecture,
         writer: &mut W,
         tensor_reader: &TensorReader,
         shared_classifier: bool,
         model_type: &ModelType,
     ) -> Result<()> {
         let estimated_capacity = 1  // embed_tokens
-            + (self.config.n_layers as usize * Self::QWEN3_LAYER_COMPONENTS.len())  // layer weights
-            + usize::from(!shared_classifier); // classifier if not shared
+        + architecture.weight_layers().len()  // layer weights
+        + usize::from(!shared_classifier); // classifier if not shared
+
         let mut weight_tensors = Vec::with_capacity(estimated_capacity);
 
         // First: embedding tokens
-        weight_tensors.push((Self::EMBED_TOKENS_KEY.to_string(), None, None));
+        weight_tensors.push((architecture.embed_tokens_layer().to_string(), None, None));
 
-        // Then: group by tensor type across all layers (matching Python exactly)
-        for &component in Self::QWEN3_LAYER_COMPONENTS {
-            for layer_idx in 0..self.config.n_layers {
-                let tensor_name = format!("model.layers.{}.{}.weight", layer_idx, component);
-                weight_tensors.push((tensor_name, Some(layer_idx), Some(component.to_string())));
-            }
+        // Then: layer weights
+        for WeightLayer {
+            tensor_name,
+            component,
+            layer_idx,
+        } in architecture.weight_layers()
+        {
+            weight_tensors.push((
+                tensor_name.clone(),
+                Some(component.to_string()),
+                Some(*layer_idx),
+            ));
         }
 
-        // Finally: classifier if not shared (matching Python logic)
+        // Finally: classifier if not shared
         if !shared_classifier {
-            weight_tensors.push((Self::LM_HEAD_KEY.to_string(), None, None));
+            weight_tensors.push((architecture.lm_head_layer().to_string(), None, None));
         }
 
         let progress = ProgressTracker::new(weight_tensors.len(), "Quantizing");
@@ -556,7 +506,7 @@ impl BinaryModelExporter {
         let max_errors: Result<Vec<f32>> = weight_tensors
             .iter()
             .enumerate()
-            .map(|(i, (tensor_name, layer_idx, tensor_type))| {
+            .map(|(i, (tensor_name, tensor_type, layer_idx))| {
                 progress.set_current(i + 1, Some(tensor_name));
 
                 // Load the base tensor (same for both base and LoRA models)

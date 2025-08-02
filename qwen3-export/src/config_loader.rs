@@ -7,6 +7,8 @@ use log::info;
 use serde::{Deserialize, Serialize};
 use std::{fs::File, io::Read, path::Path};
 
+use crate::models::ArchitectureId;
+
 /// Model type detection with embedded LoRA configuration
 #[derive(Debug, Clone, PartialEq)]
 pub enum ModelType {
@@ -22,7 +24,7 @@ pub struct ModelInfo {
 }
 
 /// Configuration structure matching the Python ModelArgs
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ModelConfig {
     pub dim: u32,
     pub hidden_dim: u32,
@@ -35,7 +37,7 @@ pub struct ModelConfig {
     pub norm_eps: f32,
     pub bos_token_id: u32,
     pub eos_token_id: u32,
-    pub architectures: Vec<String>, // e.g., ["Qwen3ForCausalLM"]
+    pub architecture: ArchitectureId,
 }
 
 /// LoRA configuration from adapter_config.json
@@ -153,6 +155,18 @@ fn load_hf_config(config_path: &Path) -> Result<ModelConfig> {
         .head_dim
         .unwrap_or(hf_config.hidden_size / hf_config.num_attention_heads);
 
+    // Try to determine architecture
+    let architectures = hf_config.architectures.as_ref();
+    let architecture = match (architectures, architectures.and_then(|a| a.first())) {
+        (Some(architectures), Some(first)) if architectures.len() == 1 => {
+            ArchitectureId::try_from(first.as_str())?
+        }
+        (Some(architectures), _) => {
+            anyhow::bail!("Multiple architectures are not supported: {architectures:?}")
+        }
+        _ => anyhow::bail!("Cannot determine architecture"),
+    };
+
     let config = ModelConfig {
         dim: hf_config.hidden_size,
         hidden_dim: hf_config.intermediate_size,
@@ -165,12 +179,11 @@ fn load_hf_config(config_path: &Path) -> Result<ModelConfig> {
         head_dim,
         bos_token_id: hf_config.bos_token_id.unwrap_or(0),
         eos_token_id: hf_config.eos_token_id.unwrap_or(0),
-        architectures: hf_config
-            .architectures
-            .unwrap_or_else(|| vec!["Qwen3ForCausalLM".to_string()]),
+        architecture,
     };
 
     info!("Model configuration loaded:");
+    info!("   • Architecture: {:?}", config.architecture);
     info!("   • Dimensions: {}", config.dim);
     info!("   • Layers: {}", config.n_layers);
     info!("   • Attention heads: {}", config.n_heads);
