@@ -3,7 +3,6 @@ use anyhow::Result;
 use log::{debug, warn};
 use rayon::prelude::*;
 
-
 /// LoraMerger applies standard LoRA merge logic on tensors: W = W_base + α / r * (B @ A)
 ///
 /// Assumptions:
@@ -106,74 +105,39 @@ impl<'a> LoraMerger<'a> {
             ));
         }
 
+        let rank = self.rank;
         let base_len = base.len();
         let a_len = lora_a.len();
         let b_len = lora_b.len();
 
-        // Try to infer dimensions from the tensor sizes using known rank
-        // LoRA format: A: (rank, in_features), B: (out_features, rank)
-        // Base weight: (out_features, in_features) - flattened to 1D
+        // Calculate dimensions using known rank
         let (in_features, out_features) = self.calculate_lora_dimensions(base_len, a_len, b_len)?;
 
-        let rank = self.rank;
         debug!(
             "Merging LoRA: base {out_features}×{in_features} ({base_len}), A {rank}×{in_features} ({a_len}), B {out_features}×{rank} ({b_len}), rank={rank}, scaling={:.6}",
             self.scaling
         );
 
-        // Check for potential numerical issues
-        self.validate_tensors_for_merge(base, lora_a, lora_b)?;
-
-        // Perform parallel matrix multiplication: delta_W = scaling * (B @ A)
-        // B: (out_features, rank), A: (rank, in_features) -> delta_W: (out_features, in_features)
-        let mut result = base.to_vec();
-
-        // Compute deltas in parallel, then apply them
-        let deltas = (0..base.len())
-            .into_par_iter()
-            .map(|result_idx| {
-                let out_idx = result_idx / in_features;
-                let in_idx = result_idx % in_features;
-
-                let mut delta_val = 0.0f32;
-
-                // Compute one element of B @ A
-                for r in 0..self.rank {
-                    let b_val = lora_b[out_idx * self.rank + r]; // B[out_idx, r]
-                    let a_val = lora_a[r * in_features + in_idx]; // A[r, in_idx]
-                    delta_val += b_val * a_val;
-                }
-
-                // Apply scaling
-                let scaled_delta = self.scaling * delta_val;
-
-                // Check for overflow/underflow
-                if !scaled_delta.is_finite() {
-                    anyhow::bail!(
-                        "Numerical instability detected at position ({out_idx}, {in_idx}): delta={delta_val}, scaled={scaled_delta}"
-                    );
-                }
-
-                Ok(scaled_delta)
-            })
-            .collect::<Result<Vec<f32>>>()?;
-
-        // Apply deltas and validate results
-        for (idx, &delta) in deltas.iter().enumerate() {
-            result[idx] += delta;
-
-            if !result[idx].is_finite() {
-                let out_idx = idx / in_features;
-                let in_idx = idx % in_features;
-                anyhow::bail!(
-                    "Result overflow at position ({out_idx}, {in_idx}): base={}, delta={delta}, result={}",
-                    base[idx],
-                    result[idx]
-                );
-            }
+        if self.scaling.abs() > 1e3 {
+            warn!("Large scaling factor detected: {:.6}", self.scaling);
         }
 
-        // Compute statistics for validation and logging
+        // apply merge: W = W_base + scaling * (B @ A)
+        let mut result = base.to_vec();
+        result.par_iter_mut().enumerate().for_each(|(idx, base_val)| {
+            let out_idx = idx / in_features;
+            let in_idx = idx % in_features;
+
+            let mut delta_val = 0.0f32;
+            for r in 0..self.rank {
+                let b_val = lora_b[out_idx * self.rank + r];
+                let a_val = lora_a[r * in_features + in_idx];
+                delta_val += b_val * a_val;
+            }
+
+            *base_val += self.scaling * delta_val;
+        });
+
         let (max_abs_delta, avg_abs_delta, max_abs_base, avg_abs_base) =
             self.compute_merge_statistics(base, &result)?;
 
@@ -181,11 +145,6 @@ impl<'a> LoraMerger<'a> {
             "LoRA merge complete: max_delta={max_abs_delta:.6}, avg_delta={avg_abs_delta:.6}, max_base={max_abs_base:.6}, avg_base={avg_abs_base:.6}, relative_change={:.3}%",
             if avg_abs_base > 1e-12 { (avg_abs_delta / avg_abs_base) * 100.0 } else { 0.0 }
         );
-
-        // Final sanity checks
-        if result.iter().any(|&x| !x.is_finite()) {
-            return Err(anyhow::anyhow!("Final result contains non-finite values after LoRA merge"));
-        }
 
         Ok(result)
     }
@@ -227,77 +186,42 @@ impl<'a> LoraMerger<'a> {
         Ok((in_features, out_features))
     }
 
-    /// Validate tensors before LoRA merge to catch potential numerical issues
-    fn validate_tensors_for_merge(&self, base: &[f32], lora_a: &[f32], lora_b: &[f32]) -> Result<()> {
-        // Check for non-finite values in input tensors
-        let base_has_invalid = base.par_iter().any(|&x| !x.is_finite());
-        if base_has_invalid {
-            anyhow::bail!("Base tensor contains non-finite values");
-        }
-
-        let a_has_invalid = lora_a.par_iter().any(|&x| !x.is_finite());
-        if a_has_invalid {
-            anyhow::bail!("LoRA A tensor contains non-finite values");
-        }
-
-        let b_has_invalid = lora_b.par_iter().any(|&x| !x.is_finite());
-        if b_has_invalid {
-            anyhow::bail!("LoRA B tensor contains non-finite values");
-        }
-
-        // Computation of maximum absolute values
-        let max_base = base.par_iter().map(|&x| x.abs()).reduce(|| 0.0f32, f32::max);
-        let max_a = lora_a.par_iter().map(|&x| x.abs()).reduce(|| 0.0f32, f32::max);
-        let max_b = lora_b.par_iter().map(|&x| x.abs()).reduce(|| 0.0f32, f32::max);
-
-        // Rough estimate of maximum possible delta magnitude
-        let estimated_max_delta = max_a * max_b * self.scaling.abs();
-
-        if estimated_max_delta > 1e6 {
-            warn!(
-                "Large LoRA delta values detected (estimated max: {estimated_max_delta:.2e}). \
-                 This may indicate numerical instability. Base max: {max_base:.2e}, A max: {max_a:.2e}, B max: {max_b:.2e}, scaling: {:.6}",
-                self.scaling
-            );
-        }
-
-        // Check if the result might overflow f32
-        if max_base + estimated_max_delta > f32::MAX / 2.0 {
-            anyhow::bail!(
-                "Potential f32 overflow detected: base_max={max_base:.2e}, estimated_delta_max={estimated_max_delta:.2e}",
-            );
-        }
-
-        Ok(())
-    }
-
     /// Compute statistics for LoRA merge validation and logging using parallel processing
     fn compute_merge_statistics(&self, base: &[f32], result: &[f32]) -> Result<(f32, f32, f32, f32)> {
         if base.len() != result.len() {
             anyhow::bail!("Base and result tensor lengths don't match: {} vs {}", base.len(), result.len());
         }
 
-        // Parallel computation of statistics using reduce operations
-        let (max_abs_delta, sum_abs_delta, max_abs_base, sum_abs_base) = base
+        // Parallel computation of statistics with overflow checking
+        let stats_result: Result<(f32, f64, f32, f64)> = base
             .par_iter()
             .zip(result.par_iter())
-            .map(|(&base_val, &result_val)| {
+            .enumerate()
+            .map(|(idx, (&base_val, &result_val))| {
+                // Check for overflow/NaN in result during statistics computation
+                if !result_val.is_finite() {
+                    anyhow::bail!("Non-finite value detected in result at index {idx}: {result_val}");
+                }
+
                 let delta = (result_val - base_val).abs();
                 let abs_base = base_val.abs();
-                (delta, delta as f64, abs_base, abs_base as f64)
+                Ok((delta, delta as f64, abs_base, abs_base as f64))
             })
-            .reduce(
+            .try_reduce(
                 || (0.0f32, 0.0f64, 0.0f32, 0.0f64),
-                |(max_delta_acc, sum_delta_acc, max_base_acc, sum_base_acc),
-                 (delta, delta_f64, abs_base, abs_base_f64)| {
-                    (
+                |acc, curr| {
+                    let (max_delta_acc, sum_delta_acc, max_base_acc, sum_base_acc) = acc;
+                    let (delta, delta_f64, abs_base, abs_base_f64) = curr;
+                    Ok((
                         max_delta_acc.max(delta),
                         sum_delta_acc + delta_f64,
                         max_base_acc.max(abs_base),
                         sum_base_acc + abs_base_f64,
-                    )
+                    ))
                 },
             );
+
+        let (max_abs_delta, sum_abs_delta, max_abs_base, sum_abs_base) = stats_result?;
 
         let len = base.len() as f64;
         let avg_abs_delta = (sum_abs_delta / len) as f32;
