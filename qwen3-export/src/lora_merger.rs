@@ -1,6 +1,7 @@
 use crate::tensor_reader::TensorReader;
 use anyhow::Result;
 use log::{debug, warn};
+use rayon::prelude::*;
 
 pub(crate) struct LoraMerger<'a> {
     tensor_reader: &'a TensorReader,
@@ -81,7 +82,6 @@ impl<'a> LoraMerger<'a> {
     }
 
     /// Merge LoRA weights: W = W_base + scaling * (B @ A)
-    /// Production-ready implementation with robust error handling, optimization, and validation
     fn merge_lora_weights(&self, base: &[f32], lora_a: &[f32], lora_b: &[f32]) -> Result<Vec<f32>> {
         // Input validation
         if base.is_empty() || lora_a.is_empty() || lora_b.is_empty() {
@@ -111,13 +111,17 @@ impl<'a> LoraMerger<'a> {
         // Check for potential numerical issues
         self.validate_tensors_for_merge(base, lora_a, lora_b)?;
 
-        // Perform optimized matrix multiplication: delta_W = scaling * (B @ A)
+        // Perform parallel matrix multiplication: delta_W = scaling * (B @ A)
         // B: (out_features, rank), A: (rank, in_features) -> delta_W: (out_features, in_features)
         let mut result = base.to_vec();
 
-        // Direct computation without allocating intermediate delta_w matrix
-        for out_idx in 0..out_features {
-            for in_idx in 0..in_features {
+        // Compute deltas in parallel, then apply them
+        let deltas = (0..base.len())
+            .into_par_iter()
+            .map(|result_idx| {
+                let out_idx = result_idx / in_features;
+                let in_idx = result_idx % in_features;
+
                 let mut delta_val = 0.0f32;
 
                 // Compute one element of B @ A
@@ -127,27 +131,32 @@ impl<'a> LoraMerger<'a> {
                     delta_val += b_val * a_val;
                 }
 
-                // Apply scaling and add to base weight directly
-                let result_idx = out_idx * in_features + in_idx;
+                // Apply scaling
                 let scaled_delta = self.scaling * delta_val;
 
-                // Check for overflow/underflow before adding
+                // Check for overflow/underflow
                 if !scaled_delta.is_finite() {
-                    return Err(anyhow::anyhow!(
-                        "Numerical instability detected at position ({out_idx}, {in_idx}): delta={delta_val}, scaled={scaled_delta}",
-                    ));
+                    anyhow::bail!(
+                        "Numerical instability detected at position ({out_idx}, {in_idx}): delta={delta_val}, scaled={scaled_delta}"
+                    );
                 }
 
-                result[result_idx] += scaled_delta;
+                Ok(scaled_delta)
+            })
+            .collect::<Result<Vec<f32>>>()?;
 
-                // Additional overflow check after addition
-                if !result[result_idx].is_finite() {
-                    return Err(anyhow::anyhow!(
-                        "Result overflow at position ({out_idx}, {in_idx}): base={}, delta={scaled_delta}, result={}",
-                        base[result_idx],
-                        result[result_idx]
-                    ));
-                }
+        // Apply deltas and validate results
+        for (idx, &delta) in deltas.iter().enumerate() {
+            result[idx] += delta;
+
+            if !result[idx].is_finite() {
+                let out_idx = idx / in_features;
+                let in_idx = idx % in_features;
+                anyhow::bail!(
+                    "Result overflow at position ({out_idx}, {in_idx}): base={}, delta={delta}, result={}",
+                    base[idx],
+                    result[idx]
+                );
             }
         }
 
@@ -234,22 +243,34 @@ impl<'a> LoraMerger<'a> {
         lora_b: &[f32],
     ) -> Result<()> {
         // Check for non-finite values in input tensors
-        if base.iter().any(|&x| !x.is_finite()) {
+        let base_has_invalid = base.par_iter().any(|&x| !x.is_finite());
+        if base_has_invalid {
             anyhow::bail!("Base tensor contains non-finite values");
         }
 
-        if lora_a.iter().any(|&x| !x.is_finite()) {
+        let a_has_invalid = lora_a.par_iter().any(|&x| !x.is_finite());
+        if a_has_invalid {
             anyhow::bail!("LoRA A tensor contains non-finite values");
         }
 
-        if lora_b.iter().any(|&x| !x.is_finite()) {
+        let b_has_invalid = lora_b.par_iter().any(|&x| !x.is_finite());
+        if b_has_invalid {
             anyhow::bail!("LoRA B tensor contains non-finite values");
         }
 
-        // Check for extreme values that might cause overflow
-        let max_base = base.iter().map(|&x| x.abs()).fold(0.0f32, f32::max);
-        let max_a = lora_a.iter().map(|&x| x.abs()).fold(0.0f32, f32::max);
-        let max_b = lora_b.iter().map(|&x| x.abs()).fold(0.0f32, f32::max);
+        // Computation of maximum absolute values
+        let max_base = base
+            .par_iter()
+            .map(|&x| x.abs())
+            .reduce(|| 0.0f32, f32::max);
+        let max_a = lora_a
+            .par_iter()
+            .map(|&x| x.abs())
+            .reduce(|| 0.0f32, f32::max);
+        let max_b = lora_b
+            .par_iter()
+            .map(|&x| x.abs())
+            .reduce(|| 0.0f32, f32::max);
 
         // Rough estimate of maximum possible delta magnitude
         let estimated_max_delta = max_a * max_b * self.scaling.abs();
@@ -272,7 +293,7 @@ impl<'a> LoraMerger<'a> {
         Ok(())
     }
 
-    /// Compute statistics for LoRA merge validation and logging
+    /// Compute statistics for LoRA merge validation and logging using parallel processing
     fn compute_merge_statistics(
         &self,
         base: &[f32],
@@ -286,20 +307,27 @@ impl<'a> LoraMerger<'a> {
             );
         }
 
-        let mut max_abs_delta = 0.0f32;
-        let mut sum_abs_delta = 0.0f64; // Use f64 for better precision in sum
-        let mut max_abs_base = 0.0f32;
-        let mut sum_abs_base = 0.0f64;
-
-        for (&base_val, &result_val) in base.iter().zip(result.iter()) {
-            let delta = (result_val - base_val).abs();
-            max_abs_delta = max_abs_delta.max(delta);
-            sum_abs_delta += delta as f64;
-
-            let abs_base = base_val.abs();
-            max_abs_base = max_abs_base.max(abs_base);
-            sum_abs_base += abs_base as f64;
-        }
+        // Parallel computation of statistics using reduce operations
+        let (max_abs_delta, sum_abs_delta, max_abs_base, sum_abs_base) = base
+            .par_iter()
+            .zip(result.par_iter())
+            .map(|(&base_val, &result_val)| {
+                let delta = (result_val - base_val).abs();
+                let abs_base = base_val.abs();
+                (delta, delta as f64, abs_base, abs_base as f64)
+            })
+            .reduce(
+                || (0.0f32, 0.0f64, 0.0f32, 0.0f64),
+                |(max_delta_acc, sum_delta_acc, max_base_acc, sum_base_acc),
+                 (delta, delta_f64, abs_base, abs_base_f64)| {
+                    (
+                        max_delta_acc.max(delta),
+                        sum_delta_acc + delta_f64,
+                        max_base_acc.max(abs_base),
+                        sum_base_acc + abs_base_f64,
+                    )
+                },
+            );
 
         let len = base.len() as f64;
         let avg_abs_delta = (sum_abs_delta / len) as f32;
