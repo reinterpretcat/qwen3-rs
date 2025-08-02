@@ -3,6 +3,28 @@ use anyhow::Result;
 use log::{debug, warn};
 use rayon::prelude::*;
 
+
+/// LoraMerger applies standard LoRA merge logic on tensors: W = W_base + α / r * (B @ A)
+///
+/// Assumptions:
+/// - LoRA uses a low-rank update to fine-tune a frozen base model weight.
+/// - A and B are learned matrices with shapes:
+///     - A: (r, in_features)
+///     - B: (out_features, r)
+/// - The base weight matrix W_base has shape (out_features, in_features) and is stored in row-major 1D layout.
+/// - The rank `r` is a small integer (e.g., 4, 8, 16) << min(in_features, out_features).
+/// - `alpha` is a scalar hyperparameter; `scaling = alpha / r`.
+///
+/// Merge formula:
+///   W = W_base + scaling * (B @ A)
+/// Where:
+/// - `B @ A` produces a matrix of shape (out_features, in_features)
+/// - `scaling` modulates the update magnitude
+/// - The update is applied elementwise to the flattened base tensor
+///
+/// Notes:
+/// - This code assumes tensors are flattened 1D f32 buffers in row-major order.
+/// - The caller is responsible for ensuring tensor shapes are consistent.
 pub(crate) struct LoraMerger<'a> {
     tensor_reader: &'a TensorReader,
     scaling: f32,
@@ -14,7 +36,7 @@ impl<'a> LoraMerger<'a> {
         let scaling = alpha / rank as f32;
 
         if !scaling.is_finite() || scaling.is_nan() {
-            anyhow::bail!("Invalid scaling factor: {scaling} (must be finite)");
+            anyhow::bail!("Invalid scaling factor: {scaling} (must be finite). Alpha: {alpha}, Rank: {rank}");
         }
 
         Ok(Self { tensor_reader, scaling, rank })
