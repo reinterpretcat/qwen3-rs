@@ -2,12 +2,12 @@ use crate::tensor_reader::TensorReader;
 
 use super::*;
 
-pub struct Qwen<'a> {
+pub struct Qwen3<'a> {
     weight_layers: Vec<WeightLayer<'a>>,
     tensor_reader: &'a TensorReader,
 }
 
-impl<'a> Qwen<'a> {
+impl<'a> Qwen3<'a> {
     const ARCH_NAME: &'static str = "Qwen3ForCausalLM";
     const EMBED_TOKENS_KEY: &'static str = "model.embed_tokens.weight";
     const LM_HEAD_KEY: &'static str = "lm_head.weight";
@@ -47,7 +47,7 @@ impl<'a> Qwen<'a> {
     }
 }
 
-impl<'a> Architecture for Qwen<'a> {
+impl<'a> Architecture for Qwen3<'a> {
     fn id(&self) -> ArchitectureId {
         ArchitectureId::Qwen3ForCausalLM
     }

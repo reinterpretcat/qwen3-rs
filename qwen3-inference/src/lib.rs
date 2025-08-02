@@ -4,6 +4,7 @@
 
 mod configuration;
 mod generation;
+mod models;
 mod sampler;
 mod tensor;
 mod tokenizer;

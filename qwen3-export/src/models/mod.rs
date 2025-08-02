@@ -1,8 +1,8 @@
 use anyhow::Result;
 
-use crate::{ModelInfo, models::qwen::Qwen, tensor_reader::TensorReader};
+use crate::{ModelInfo, models::qwen3::Qwen3, tensor_reader::TensorReader};
 
-mod qwen;
+mod qwen3;
 
 /// Architecture ID for binary format identification
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,7 +90,7 @@ pub trait Architecture {
 
 pub fn create_architecture<'a>(model_info: &ModelInfo, tensor_reader: &'a TensorReader) -> Box<dyn Architecture + 'a> {
     match model_info.config.architecture {
-        ArchitectureId::Qwen3ForCausalLM => Box::new(Qwen::new(model_info, tensor_reader)),
+        ArchitectureId::Qwen3ForCausalLM => Box::new(Qwen3::new(model_info, tensor_reader)),
         ArchitectureId::LlamaForCausalLM => todo!("LlamaForCausalLM not yet implemented"),
     }
 }
