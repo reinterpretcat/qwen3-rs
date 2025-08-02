@@ -6,22 +6,15 @@ use anyhow::Result;
 use byteorder::{LittleEndian, WriteBytesExt};
 use log::{info, warn};
 use rayon::prelude::*;
-use std::{
-    fs::File,
-    io::{BufWriter, Write},
-    path::Path,
-};
+use std::fs::File;
+use std::io::{BufWriter, Write};
+use std::path::Path;
 
+use crate::lora_merger::LoraMerger;
+use crate::models::{Architecture, HeaderInfo, NormWeightLayer, WeightLayer, create_architecture};
+use crate::tensor_reader::TensorReader;
 use crate::utils::ProgressTracker;
 use crate::{ModelConfig, ModelInfo, ModelType};
-use crate::{
-    lora_merger::LoraMerger,
-    models::{HeaderInfo, WeightLayer},
-};
-use crate::{
-    models::{Architecture, NormWeightLayer, create_architecture},
-    tensor_reader::TensorReader,
-};
 
 // Quantization result
 #[derive(Debug)]
@@ -297,7 +290,7 @@ impl BinaryModelExporter {
             ));
         }
 
-        // Finally: classifier if not shared
+        // Then Classifier if not shared
         if !shared_classifier {
             weight_tensors.push((architecture.lm_head_layer().to_string(), None, None));
         }
