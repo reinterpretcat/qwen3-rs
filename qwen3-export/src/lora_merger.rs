@@ -5,6 +5,7 @@ use log::{debug, warn};
 pub(crate) struct LoraMerger<'a> {
     tensor_reader: &'a TensorReader,
     scaling: f32,
+    rank: usize,
 }
 
 impl<'a> LoraMerger<'a> {
@@ -20,6 +21,7 @@ impl<'a> LoraMerger<'a> {
         Ok(Self {
             tensor_reader,
             scaling,
+            rank,
         })
     }
 
@@ -128,15 +130,14 @@ impl<'a> LoraMerger<'a> {
         let a_len = lora_a.len();
         let b_len = lora_b.len();
 
-        // Try to infer dimensions from the tensor sizes
+        // Try to infer dimensions from the tensor sizes using known rank
         // LoRA format: A: (rank, in_features), B: (out_features, rank)
         // Base weight: (out_features, in_features) - flattened to 1D
-        let (rank, in_features, out_features) =
-            self.infer_lora_dimensions(base_len, a_len, b_len)?;
+        let (in_features, out_features) = self.calculate_lora_dimensions(base_len, a_len, b_len)?;
 
         debug!(
-            "Merging LoRA: base {out_features}×{in_features} ({base_len}), A {rank}×{in_features} ({a_len}), B {out_features}×{rank} ({b_len}), rank={rank}, scaling={:.6}",
-            self.scaling
+            "Merging LoRA: base {out_features}×{in_features} ({base_len}), A {}×{in_features} ({a_len}), B {out_features}×{} ({b_len}), rank={}, scaling={:.6}",
+            self.rank, self.rank, self.rank, self.scaling
         );
 
         // Check for potential numerical issues
@@ -152,8 +153,8 @@ impl<'a> LoraMerger<'a> {
                 let mut delta_val = 0.0f32;
 
                 // Compute one element of B @ A
-                for r in 0..rank {
-                    let b_val = lora_b[out_idx * rank + r]; // B[out_idx, r]
+                for r in 0..self.rank {
+                    let b_val = lora_b[out_idx * self.rank + r]; // B[out_idx, r]
                     let a_val = lora_a[r * in_features + in_idx]; // A[r, in_idx]
                     delta_val += b_val * a_val;
                 }
@@ -205,90 +206,61 @@ impl<'a> LoraMerger<'a> {
         Ok(result)
     }
 
-    /// Infer LoRA dimensions with comprehensive error handling
-    /// Returns (rank, in_features, out_features) or error if cannot infer
-    fn infer_lora_dimensions(
+    /// Calculate LoRA dimensions using the known rank from config
+    /// Returns (in_features, out_features) or error if dimensions don't match
+    fn calculate_lora_dimensions(
         &self,
         base_len: usize,
         a_len: usize,
         b_len: usize,
-    ) -> Result<(usize, usize, usize)> {
-        // Comprehensive dimension inference with multiple strategies
+    ) -> Result<(usize, usize)> {
+        // With known rank, we can directly calculate dimensions
+        // LoRA format: A: (rank, in_features), B: (out_features, rank)
 
-        // Strategy 1: Standard LoRA layout - A: (rank, in_features), B: (out_features, rank)
-        for rank in 1..=512 {
-            // Extended range for larger models
-            if a_len % rank == 0 && b_len % rank == 0 {
-                let in_features = a_len / rank;
-                let out_features = b_len / rank;
-
-                // Check if this produces the correct base dimension
-                if in_features * out_features == base_len && in_features > 0 && out_features > 0 {
-                    debug!(
-                        "Inferred LoRA dimensions using standard layout: rank={}, in={}, out={}",
-                        rank, in_features, out_features
-                    );
-                    return Ok((rank, in_features, out_features));
-                }
-            }
-        }
-
-        // Strategy 2: Transposed A layout - A: (in_features, rank), B: (out_features, rank)
-        for rank in 1..=512 {
-            if a_len % rank == 0 && b_len % rank == 0 {
-                let in_features = a_len / rank; // Different interpretation
-                let out_features = b_len / rank;
-
-                if in_features * out_features == base_len && in_features > 0 && out_features > 0 {
-                    debug!(
-                        "Inferred LoRA dimensions using transposed A layout: rank={}, in={}, out={}",
-                        rank, in_features, out_features
-                    );
-                    return Ok((rank, in_features, out_features));
-                }
-            }
-        }
-
-        // Strategy 3: Alternative factorizations (some LoRA implementations vary)
-        // Try to find any valid factorization where rank divides both A and B tensors
-        let mut candidates = Vec::new();
-        for rank in 1..=std::cmp::min(a_len, b_len) {
-            if a_len % rank == 0 && b_len % rank == 0 {
-                let in_features_1 = a_len / rank;
-                let out_features_1 = b_len / rank;
-                if in_features_1 * out_features_1 == base_len {
-                    candidates.push((rank, in_features_1, out_features_1));
-                }
-
-                let in_features_2 = rank;
-                let out_features_2 = b_len / rank;
-                let rank_2 = a_len / rank;
-                if in_features_2 * out_features_2 == base_len && rank_2 > 0 {
-                    candidates.push((rank_2, in_features_2, out_features_2));
-                }
-            }
-        }
-
-        if !candidates.is_empty() {
-            // Prefer smaller ranks (more typical for LoRA)
-            candidates.sort_by_key(|(rank, _, _)| *rank);
-            let (rank, in_features, out_features) = candidates[0];
-            debug!(
-                "Inferred LoRA dimensions using alternative strategy: rank={}, in={}, out={}",
-                rank, in_features, out_features
+        if a_len % self.rank != 0 {
+            anyhow::bail!(
+                "LoRA A tensor size ({}) is not divisible by rank ({})",
+                a_len,
+                self.rank
             );
-            return Ok((rank, in_features, out_features));
         }
 
-        Err(anyhow::anyhow!(
-            "Could not infer LoRA dimensions from tensor sizes: base={}, A={}, B={}. \
-             This may indicate incompatible LoRA format or corrupted tensors. \
-             Expected: A should be (rank × in_features) and B should be (out_features × rank) \
-             where in_features × out_features = base_len",
-            base_len,
-            a_len,
-            b_len
-        ))
+        if b_len % self.rank != 0 {
+            anyhow::bail!(
+                "LoRA B tensor size ({}) is not divisible by rank ({})",
+                b_len,
+                self.rank
+            );
+        }
+
+        let in_features = a_len / self.rank;
+        let out_features = b_len / self.rank;
+
+        // Verify that dimensions are consistent with base weight
+        if in_features * out_features != base_len {
+            anyhow::bail!(
+                "Dimension mismatch: base tensor size ({}) doesn't match calculated dimensions ({}×{} = {})",
+                base_len,
+                out_features,
+                in_features,
+                in_features * out_features
+            );
+        }
+
+        if in_features == 0 || out_features == 0 {
+            anyhow::bail!(
+                "Invalid dimensions: in_features={}, out_features={}",
+                in_features,
+                out_features
+            );
+        }
+
+        debug!(
+            "Calculated LoRA dimensions: rank={}, in_features={}, out_features={}",
+            self.rank, in_features, out_features
+        );
+
+        Ok((in_features, out_features))
     }
 
     /// Validate tensors before LoRA merge to catch potential numerical issues

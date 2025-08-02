@@ -4,7 +4,7 @@ mod model_exporter_test;
 
 use anyhow::Result;
 use byteorder::{LittleEndian, WriteBytesExt};
-use log::{debug, info, warn};
+use log::{info, warn};
 use rayon::prelude::*;
 use std::{
     fs::File,
@@ -84,7 +84,7 @@ impl BinaryModelExporter {
         let tensor_reader = TensorReader::new(model_path)?;
 
         #[cfg(debug_assertions)]
-        debug!("Tensor names: {:?}", tensor_reader.list_tensor_names()?);
+        log::debug!("Tensor names: {:?}", tensor_reader.list_tensor_names()?);
 
         let file = File::create(output_path)?;
         let mut writer = BufWriter::new(file);
