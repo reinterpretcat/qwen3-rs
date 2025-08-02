@@ -23,6 +23,7 @@
 // Public modules and re-exports from the former export module
 pub mod chat_template_exporter;
 pub mod config_loader;
+pub mod lora_merger;
 pub mod model_exporter;
 pub mod models;
 pub mod tensor_reader;
