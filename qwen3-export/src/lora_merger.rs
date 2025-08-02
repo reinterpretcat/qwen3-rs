@@ -13,9 +13,7 @@ impl<'a> LoraMerger<'a> {
         let scaling = alpha / rank as f32;
 
         if !scaling.is_finite() || scaling.is_nan() {
-            anyhow::bail!(anyhow::anyhow!(
-                "Invalid scaling factor: {scaling} (must be finite)"
-            ));
+            anyhow::bail!("Invalid scaling factor: {scaling} (must be finite)");
         }
 
         Ok(Self {
@@ -55,52 +53,21 @@ impl<'a> LoraMerger<'a> {
         component: &str,
         layer_idx: u32,
     ) -> Result<(Option<Vec<f32>>, Option<Vec<f32>>)> {
+        // TODO: consider supporting different patterns?
+
         // Based on the actual tensor naming pattern:
         // Base: model.layers.{layer}.{component}.weight
-        // LoRA A: base_model.model.model.layers.{layer}.{component}.lora_A.weight
-        // LoRA B: base_model.model.model.layers.{layer}.{component}.lora_B.weight
 
-        let lora_a_name = format!(
-            "base_model.model.model.layers.{}.{}.lora_A.weight",
-            layer_idx, component
-        );
-        let lora_b_name = format!(
-            "base_model.model.model.layers.{}.{}.lora_B.weight",
-            layer_idx, component
-        );
+        let lora_a_name =
+            format!("base_model.model.model.layers.{layer_idx}.{component}.lora_A.weight");
+        let lora_b_name =
+            format!("base_model.model.model.layers.{layer_idx}.{component}.lora_B.weight");
 
         debug!("Looking for LoRA A: '{lora_a_name}'");
+        let lora_a = self.tensor_reader.load_tensor(&lora_a_name)?;
+
         debug!("Looking for LoRA B: '{lora_b_name}'");
-
-        // Try to load LoRA A
-        let lora_a = match self.tensor_reader.load_tensor(&lora_a_name)? {
-            Some(tensor) => {
-                debug!(
-                    "Loaded LoRA A tensor: {lora_a_name} (size: {})",
-                    tensor.len()
-                );
-                Some(tensor)
-            }
-            None => {
-                debug!("LoRA A tensor not found: {lora_a_name}");
-                None
-            }
-        };
-
-        // Try to load LoRA B
-        let lora_b = match self.tensor_reader.load_tensor(&lora_b_name)? {
-            Some(tensor) => {
-                debug!(
-                    "Loaded LoRA B tensor: {lora_b_name} (size: {})",
-                    tensor.len()
-                );
-                Some(tensor)
-            }
-            None => {
-                debug!("LoRA B tensor not found: {lora_b_name}");
-                None
-            }
-        };
+        let lora_b = self.tensor_reader.load_tensor(&lora_b_name)?;
 
         if lora_a.is_none() || lora_b.is_none() {
             debug!(
@@ -135,9 +102,10 @@ impl<'a> LoraMerger<'a> {
         // Base weight: (out_features, in_features) - flattened to 1D
         let (in_features, out_features) = self.calculate_lora_dimensions(base_len, a_len, b_len)?;
 
+        let rank = self.rank;
         debug!(
-            "Merging LoRA: base {out_features}×{in_features} ({base_len}), A {}×{in_features} ({a_len}), B {out_features}×{} ({b_len}), rank={}, scaling={:.6}",
-            self.rank, self.rank, self.rank, self.scaling
+            "Merging LoRA: base {out_features}×{in_features} ({base_len}), A {rank}×{in_features} ({a_len}), B {out_features}×{rank} ({b_len}), rank={rank}, scaling={:.6}",
+            self.scaling
         );
 
         // Check for potential numerical issues
@@ -239,25 +207,20 @@ impl<'a> LoraMerger<'a> {
         // Verify that dimensions are consistent with base weight
         if in_features * out_features != base_len {
             anyhow::bail!(
-                "Dimension mismatch: base tensor size ({}) doesn't match calculated dimensions ({}×{} = {})",
-                base_len,
-                out_features,
-                in_features,
+                "Dimension mismatch: base tensor size ({base_len}) doesn't match calculated dimensions ({out_features}×{in_features} = {})",
                 in_features * out_features
             );
         }
 
         if in_features == 0 || out_features == 0 {
             anyhow::bail!(
-                "Invalid dimensions: in_features={}, out_features={}",
-                in_features,
-                out_features
+                "Invalid dimensions: in_features={in_features}, out_features={out_features}",
             );
         }
 
         debug!(
-            "Calculated LoRA dimensions: rank={}, in_features={}, out_features={}",
-            self.rank, in_features, out_features
+            "Calculated LoRA dimensions: rank={}, in_features={in_features}, out_features={out_features}",
+            self.rank,
         );
 
         Ok((in_features, out_features))
