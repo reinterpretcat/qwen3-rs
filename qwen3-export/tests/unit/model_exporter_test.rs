@@ -1,5 +1,23 @@
 use super::*;
 
+// Helper function for tests
+fn create_test_config() -> ModelConfig {
+    ModelConfig {
+        dim: 4,
+        hidden_dim: 16,
+        n_layers: 1,
+        n_heads: 2,
+        n_kv_heads: 2,
+        vocab_size: 100,
+        max_seq_len: 128,
+        head_dim: 2,
+        norm_eps: 1e-5,
+        bos_token_id: 0,
+        eos_token_id: 1,
+        architectures: vec!["Qwen3ForCausalLM".to_string()],
+    }
+}
+
 #[test]
 fn test_round_half_to_even_basic() {
     // Test basic rounding cases
@@ -23,19 +41,7 @@ fn test_round_half_to_even_halfway_cases() {
 
 #[test]
 fn test_quantize_q80_known_values() {
-    let config = ModelConfig {
-        dim: 4,
-        hidden_dim: 16,
-        n_layers: 1,
-        n_heads: 2,
-        n_kv_heads: 2,
-        vocab_size: 100,
-        max_seq_len: 128,
-        head_dim: 2,
-        norm_eps: 1e-5,
-        bos_token_id: 0,
-        eos_token_id: 1,
-    };
+    let config = create_test_config();
 
     let exporter = BinaryModelExporter::new(config, 4);
 
@@ -57,19 +63,7 @@ fn test_quantize_q80_known_values() {
 
 #[test]
 fn test_quantize_q80_zero_weights() {
-    let config = ModelConfig {
-        dim: 4,
-        hidden_dim: 16,
-        n_layers: 1,
-        n_heads: 2,
-        n_kv_heads: 2,
-        vocab_size: 100,
-        max_seq_len: 128,
-        head_dim: 2,
-        norm_eps: 1e-5,
-        bos_token_id: 0,
-        eos_token_id: 1,
-    };
+    let config = create_test_config();
 
     let exporter = BinaryModelExporter::new(config, 4);
 
@@ -89,19 +83,7 @@ fn test_quantize_q80_zero_weights() {
 
 #[test]
 fn test_quantize_q80_invalid_group_size() {
-    let config = ModelConfig {
-        dim: 4,
-        hidden_dim: 16,
-        n_layers: 1,
-        n_heads: 2,
-        n_kv_heads: 2,
-        vocab_size: 100,
-        max_seq_len: 128,
-        head_dim: 2,
-        norm_eps: 1e-5,
-        bos_token_id: 0,
-        eos_token_id: 1,
-    };
+    let config = create_test_config();
 
     let exporter = BinaryModelExporter::new(config, 4);
 
@@ -161,19 +143,7 @@ fn test_header_constants() {
 
 #[test]
 fn test_quantization_symmetry() {
-    let config = ModelConfig {
-        dim: 4,
-        hidden_dim: 16,
-        n_layers: 1,
-        n_heads: 2,
-        n_kv_heads: 2,
-        vocab_size: 100,
-        max_seq_len: 128,
-        head_dim: 2,
-        norm_eps: 1e-5,
-        bos_token_id: 0,
-        eos_token_id: 1,
-    };
+    let config = create_test_config();
 
     let exporter = BinaryModelExporter::new(config, 4);
 
@@ -192,19 +162,7 @@ fn test_quantization_symmetry() {
 
 #[test]
 fn test_minimum_group_size_enforcement() {
-    let config = ModelConfig {
-        dim: 4,
-        hidden_dim: 16,
-        n_layers: 1,
-        n_heads: 2,
-        n_kv_heads: 2,
-        vocab_size: 100,
-        max_seq_len: 128,
-        head_dim: 2,
-        norm_eps: 1e-5,
-        bos_token_id: 0,
-        eos_token_id: 1,
-    };
+    let config = create_test_config();
 
     // Test that requesting a group size smaller than MIN_GROUP_SIZE gets adjusted
     let exporter = BinaryModelExporter::new(config, 2); // Request size 2, should get MIN_GROUP_SIZE

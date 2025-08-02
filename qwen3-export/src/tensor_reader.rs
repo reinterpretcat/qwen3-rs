@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use log::info;
 use memmap2::Mmap;
 use safetensors::SafeTensors;
 use std::{
@@ -33,6 +34,8 @@ impl TensorReader {
             anyhow::bail!("No SafeTensors files found in {}", model_path.display());
         }
 
+        info!("Found {} safetensor files", safetensors_files.len());
+
         Ok(TensorReader {
             safetensors_files,
             mmap_cache: Arc::new(Mutex::new(MmapCache::new(10))), // Max 10 cached files
@@ -60,6 +63,29 @@ impl TensorReader {
                     })
             })
             .map_or(Ok(None), |data| Ok(Some(data)))
+    }
+
+    /// Read all tensor files and lists all available tensor names in the model.
+    #[cfg(debug_assertions)]
+    pub fn list_tensor_names(&self) -> Result<HashMap<String, String>> {
+        let mut all_tensor_names = HashMap::new();
+
+        for filename in &self.safetensors_files {
+            let mmap = self.get_mmap(filename)?;
+            let safetensors = SafeTensors::deserialize(&mmap)
+                .with_context(|| format!("Failed to deserialize {}", filename.display()))?;
+
+            all_tensor_names.insert(
+                filename.to_string_lossy().into_owned(),
+                safetensors
+                    .names()
+                    .iter()
+                    .map(|&name| name.clone())
+                    .collect(),
+            );
+        }
+
+        Ok(all_tensor_names)
     }
 
     /// Convert tensor data to f32 based on its data type

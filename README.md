@@ -27,6 +27,8 @@ qwen3-rs/
 
 ### 1. Get a HuggingFace Qwen3 model
 
+Currently, `Qwen3ForCausalLM` architecture is supported.
+
 ```bash
 git clone https://huggingface.co/Qwen/Qwen3-0.6B
 # Or try larger/alternative models:
@@ -34,6 +36,10 @@ git clone https://huggingface.co/Qwen/Qwen3-0.6B
 # git clone https://huggingface.co/Qwen/Qwen3-8B
 # git clone https://huggingface.co/deepseek-ai/DeepSeek-R1-0528-Qwen3-8B
 ```
+
+**NOTE**: `Low Rank Adaptation (LoRA)` is supported: copy `adapter_config.json` and safe tensor files to the same folder,
+where base model is located, and it will be automatically detected (tested with `usloth` output).
+
 
 ### 2. Build and run the exporter
 

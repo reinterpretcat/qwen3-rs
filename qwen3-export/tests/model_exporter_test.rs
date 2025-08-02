@@ -8,6 +8,7 @@ use qwen3_export::{BinaryModelExporter, ModelConfig};
 /// Create a minimal mock config for testing
 fn create_test_config() -> ModelConfig {
     ModelConfig {
+        architectures: vec!["Qwen3ForCausalLM".to_string()],
         dim: 8,
         hidden_dim: 16,
         n_layers: 2,
@@ -121,16 +122,7 @@ fn test_invalid_configurations() {
     // Test with zero dimensions
     let invalid_config1 = ModelConfig {
         dim: 0,
-        hidden_dim: 16,
-        n_layers: 1,
-        n_heads: 1,
-        n_kv_heads: 1,
-        vocab_size: 100,
-        max_seq_len: 128,
-        head_dim: 4,
-        norm_eps: 1e-5,
-        bos_token_id: 0,
-        eos_token_id: 1,
+        ..create_test_config()
     };
 
     // Constructor should handle this gracefully
@@ -178,15 +170,7 @@ fn test_group_size_adjustment() {
     let config = ModelConfig {
         dim: 15, // Prime number to force group size adjustment
         hidden_dim: 32,
-        n_layers: 1,
-        n_heads: 1,
-        n_kv_heads: 1,
-        vocab_size: 100,
-        max_seq_len: 128,
-        head_dim: 4,
-        norm_eps: 1e-5,
-        bos_token_id: 0,
-        eos_token_id: 1,
+        ..create_test_config()
     };
 
     // Request a group size that doesn't divide 15
@@ -315,16 +299,7 @@ fn test_comprehensive_group_size_optimization() {
     for (dim, requested, _expected_note) in test_cases {
         let config = ModelConfig {
             dim: dim as u32,
-            hidden_dim: 64,
-            n_layers: 1,
-            n_heads: 1,
-            n_kv_heads: 1,
-            vocab_size: 100,
-            max_seq_len: 128,
-            head_dim: 4,
-            norm_eps: 1e-5,
-            bos_token_id: 0,
-            eos_token_id: 1,
+            ..create_test_config()
         };
 
         let exporter = BinaryModelExporter::new(config, requested);
@@ -449,16 +424,7 @@ fn test_error_propagation_and_boundaries() {
 fn test_minimum_group_size_enforcement() {
     let config = ModelConfig {
         dim: 7, // Prime number that will force group size adjustment
-        hidden_dim: 16,
-        n_layers: 1,
-        n_heads: 1,
-        n_kv_heads: 1,
-        vocab_size: 100,
-        max_seq_len: 128,
-        head_dim: 4,
-        norm_eps: 1e-5,
-        bos_token_id: 0,
-        eos_token_id: 1,
+        ..create_test_config()
     };
 
     // Test various requested group sizes
