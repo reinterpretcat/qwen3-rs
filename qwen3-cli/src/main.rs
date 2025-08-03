@@ -4,38 +4,39 @@ use anyhow::Result;
 use clap::{Arg, ArgMatches, Command};
 use log::{error, info};
 use qwen3_export::export_model;
-use qwen3_inference::{InferenceConfigBuilder, run_inference};
+use qwen3_inference::{InferenceConfigBuilder, TransformerBuilder, run_inference};
 
 /// Define the export subcommand.
 fn export_subcommand() -> Command {
     Command::new("export")
         .about("Export Qwen3 model from HuggingFace format to custom binary format")
-        .arg(Arg::new("MODEL_PATH")
-            .help("Path to the HuggingFace model directory (containing config.json, *.safetensors, tokenizer.json)")
-            .required(true)
-            .index(1))
-        .arg(Arg::new("OUTPUT_PATH")
-            .help("Output path for the binary model file (without extension)")
-            .required(true)
-            .index(2))
-        .arg(Arg::new("group-size")
-            .long("group-size")
-            .short('g')
-            .help("Quantization group size")
-            .value_name("SIZE")
-            .default_value("64"))
+        .arg(
+            Arg::new("MODEL_PATH")
+                .help("Path to the HuggingFace model directory (containing config.json, *.safetensors, tokenizer.json)")
+                .required(true)
+                .index(1),
+        )
+        .arg(
+            Arg::new("OUTPUT_PATH")
+                .help("Output path for the binary model file (without extension)")
+                .required(true)
+                .index(2),
+        )
+        .arg(
+            Arg::new("group-size")
+                .long("group-size")
+                .short('g')
+                .help("Quantization group size")
+                .value_name("SIZE")
+                .default_value("64"),
+        )
 }
 
 /// Define the inference subcommand.
 fn inference_subcommand() -> Command {
     Command::new("inference")
         .about("Qwen3 inference in Rust")
-        .arg(
-            Arg::new("checkpoint")
-                .help("Model checkpoint file")
-                .required(true)
-                .index(1),
-        )
+        .arg(Arg::new("checkpoint").help("Model checkpoint file").required(true).index(1))
         .arg(
             Arg::new("temperature")
                 .short('t')
@@ -78,20 +79,8 @@ fn inference_subcommand() -> Command {
                 .help("Mode: generate|chat [default: chat]")
                 .default_value("chat"),
         )
-        .arg(
-            Arg::new("input")
-                .short('i')
-                .long("input")
-                .value_name("STRING")
-                .help("Input prompt"),
-        )
-        .arg(
-            Arg::new("system")
-                .short('y')
-                .long("system")
-                .value_name("STRING")
-                .help("System prompt in chat mode"),
-        )
+        .arg(Arg::new("input").short('i').long("input").value_name("STRING").help("Input prompt"))
+        .arg(Arg::new("system").short('y').long("system").value_name("STRING").help("System prompt in chat mode"))
         .arg(
             Arg::new("reasoning")
                 .short('r')
@@ -107,11 +96,8 @@ fn inference_subcommand() -> Command {
 fn run_export_command(matches: &ArgMatches) -> Result<()> {
     let model_path = matches.get_one::<String>("MODEL_PATH").unwrap();
     let output_path = matches.get_one::<String>("OUTPUT_PATH").unwrap();
-    let group_size: usize = matches
-        .get_one::<String>("group-size")
-        .unwrap()
-        .parse()
-        .map_err(|_| anyhow::anyhow!("Invalid group size"))?;
+    let group_size: usize =
+        matches.get_one::<String>("group-size").unwrap().parse().map_err(|_| anyhow::anyhow!("Invalid group size"))?;
 
     // Validate input path
     let model_dir = Path::new(model_path);
@@ -134,12 +120,7 @@ fn run_export_command(matches: &ArgMatches) -> Result<()> {
     // Check for safetensors files
     let has_safetensors = std::fs::read_dir(model_dir)?.any(|entry| {
         if let Ok(entry) = entry {
-            entry
-                .path()
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .map(|ext| ext == "safetensors")
-                .unwrap_or(false)
+            entry.path().extension().and_then(|ext| ext.to_str()).map(|ext| ext == "safetensors").unwrap_or(false)
         } else {
             false
         }
@@ -175,7 +156,9 @@ fn run_inference_command(matches: &ArgMatches) -> Result<()> {
         .build()
         .map_err(|e| anyhow::anyhow!(e))?;
 
-    run_inference(config).map_err(|e| anyhow::anyhow!("Inference failed: {e}"))?;
+    let transformer = TransformerBuilder::new(&config.checkpoint_path).with_ctx_length(config.ctx_length).build()?;
+
+    run_inference(transformer, config).map_err(|e| anyhow::anyhow!("Inference failed: {e}"))?;
 
     Ok(())
 }

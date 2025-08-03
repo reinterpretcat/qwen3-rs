@@ -85,8 +85,7 @@ impl Tokenizer {
 
         // Load prompt templates (for chat/instruction mode)
         let prompt_template = Self::load_prompt_template(checkpoint_path, false, enable_thinking)?;
-        let system_prompt_template =
-            Self::load_prompt_template(checkpoint_path, true, enable_thinking)?;
+        let system_prompt_template = Self::load_prompt_template(checkpoint_path, true, enable_thinking)?;
 
         Ok(Self {
             vocab,
@@ -101,11 +100,7 @@ impl Tokenizer {
     }
 
     /// Loads a prompt template from disk, with support for system and "thinking" variants.
-    fn load_prompt_template(
-        checkpoint_path: &str,
-        with_system: bool,
-        enable_thinking: bool,
-    ) -> Result<String> {
+    fn load_prompt_template(checkpoint_path: &str, with_system: bool, enable_thinking: bool) -> Result<String> {
         let suffix = match (with_system, enable_thinking) {
             (true, true) => ".template.with-system-and-thinking",
             (true, false) => ".template.with-system",
@@ -152,9 +147,7 @@ impl Tokenizer {
         debug_assert_eq!(self.vocab.len(), self.vocab_size, "Vocab size mismatch");
         // Convert string to bytes and compare with vocab bytes
         let s_bytes = s.as_bytes();
-        self.vocab
-            .iter()
-            .position(|token| token.as_slice() == s_bytes)
+        self.vocab.iter().position(|token| token.as_slice() == s_bytes)
     }
 
     /// Encodes a string into a sequence of token IDs using BPE.
@@ -204,10 +197,7 @@ impl Tokenizer {
                     tokens.push(token_id);
                 } else {
                     // Print a warning for unknown characters (not present in vocab)
-                    println!(
-                        "Warning: unknown character '{}' in input, skipping.",
-                        chars[i]
-                    );
+                    println!("Warning: unknown character '{}' in input, skipping.", chars[i]);
                 }
                 i += 1;
             }
@@ -225,11 +215,7 @@ impl Tokenizer {
                 let mut merged_bytes = self.vocab[tokens[i]].clone();
                 merged_bytes.extend_from_slice(&self.vocab[tokens[i + 1]]);
 
-                if let Some(id) = self
-                    .vocab
-                    .iter()
-                    .position(|token| token.as_slice() == merged_bytes.as_slice())
-                {
+                if let Some(id) = self.vocab.iter().position(|token| token.as_slice() == merged_bytes.as_slice()) {
                     if self.merge_scores[id] > best_score {
                         best_score = self.merge_scores[id];
                         best_id = Some(id);

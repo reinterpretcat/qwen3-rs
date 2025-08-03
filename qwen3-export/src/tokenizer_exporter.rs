@@ -73,10 +73,7 @@ impl UnicodeToByteMap {
         token_str
             .chars()
             .flat_map(|ch| {
-                self.mapping
-                    .get(&ch)
-                    .map(|&b| vec![b])
-                    .unwrap_or_else(|| ch.to_string().as_bytes().to_vec())
+                self.mapping.get(&ch).map(|&b| vec![b]).unwrap_or_else(|| ch.to_string().as_bytes().to_vec())
             })
             .collect()
     }
@@ -103,14 +100,7 @@ impl TokenizerExporter {
         let tokens_by_id = self.create_ordered_tokens(&token_data.vocab);
         let u2b_map = UnicodeToByteMap::new();
 
-        self.write_tokenizer_file(
-            output_path,
-            &token_data,
-            &tokens_by_id,
-            &u2b_map,
-            bos_token_id,
-            eos_token_id,
-        )
+        self.write_tokenizer_file(output_path, &token_data, &tokens_by_id, &u2b_map, bos_token_id, eos_token_id)
     }
 
     /// Load and process all token data
@@ -123,11 +113,7 @@ impl TokenizerExporter {
 
         info!("📊 Found {} tokens in vocabulary", vocab.len());
 
-        Ok(TokenData {
-            vocab,
-            merge_ranks,
-            max_token_length,
-        })
+        Ok(TokenData { vocab, merge_ranks, max_token_length })
     }
 
     /// Load tokenizer.json file
@@ -135,30 +121,20 @@ impl TokenizerExporter {
         let tokenizer_path = model_path.join(Self::TOKENIZER_FILE_NAME);
 
         if !tokenizer_path.exists() {
-            anyhow::bail!(
-                "tokenizer.json not found in model directory: {}",
-                model_path.display()
-            );
+            anyhow::bail!("tokenizer.json not found in model directory: {}", model_path.display());
         }
 
         let mut file = File::open(&tokenizer_path)?;
         let mut contents = String::new();
         file.read_to_string(&mut contents)?;
 
-        serde_json::from_str(&contents).with_context(|| {
-            format!(
-                "Failed to parse tokenizer.json from {}",
-                tokenizer_path.display()
-            )
-        })
+        serde_json::from_str(&contents)
+            .with_context(|| format!("Failed to parse tokenizer.json from {}", tokenizer_path.display()))
     }
 
     /// Create ordered list of tokens by ID
     fn create_ordered_tokens(&self, vocab: &HashMap<String, u32>) -> Vec<(u32, String)> {
-        let mut tokens_by_id: Vec<(u32, String)> = vocab
-            .iter()
-            .map(|(token, &id)| (id, token.clone()))
-            .collect();
+        let mut tokens_by_id: Vec<(u32, String)> = vocab.iter().map(|(token, &id)| (id, token.clone())).collect();
         tokens_by_id.sort_by_key(|&(id, _)| id);
         tokens_by_id
     }
@@ -201,10 +177,7 @@ impl TokenizerExporter {
         u2b_map: &UnicodeToByteMap,
     ) -> Result<()> {
         // Calculate pseudo-score
-        let score = merge_ranks
-            .get(token)
-            .map(|&rank| -((rank + 1) as f32).ln())
-            .unwrap_or(Self::DEFAULT_SCORE);
+        let score = merge_ranks.get(token).map(|&rank| -((rank + 1) as f32).ln()).unwrap_or(Self::DEFAULT_SCORE);
 
         writer.write_f32::<LittleEndian>(score)?;
 
@@ -219,25 +192,17 @@ impl TokenizerExporter {
     /// Extract vocabulary from tokenizer data
     fn extract_vocabulary(&self, tokenizer_data: &Value) -> Result<HashMap<String, u32>> {
         // Extract vocabulary from model/vocab
-        let mut vocab: HashMap<String, u32> = if let Some(vocab_obj) = tokenizer_data
-            .pointer("/model/vocab")
-            .and_then(|v| v.as_object())
-        {
-            vocab_obj
-                .iter()
-                .filter_map(|(token, id)| id.as_u64().map(|id| (token.clone(), id as u32)))
-                .collect()
-        } else {
-            anyhow::bail!("Could not find vocabulary in tokenizer.json")
-        };
+        let mut vocab: HashMap<String, u32> =
+            if let Some(vocab_obj) = tokenizer_data.pointer("/model/vocab").and_then(|v| v.as_object()) {
+                vocab_obj.iter().filter_map(|(token, id)| id.as_u64().map(|id| (token.clone(), id as u32))).collect()
+            } else {
+                anyhow::bail!("Could not find vocabulary in tokenizer.json")
+            };
 
         info!("📚 Found {} tokens in model/vocab", vocab.len());
 
         // Add tokens from added_tokens array
-        if let Some(added_tokens) = tokenizer_data
-            .pointer("/added_tokens")
-            .and_then(|v| v.as_array())
-        {
+        if let Some(added_tokens) = tokenizer_data.pointer("/added_tokens").and_then(|v| v.as_array()) {
             for token_obj in added_tokens {
                 if let (Some(content), Some(id)) = (
                     token_obj.pointer("/content").and_then(|v| v.as_str()),
@@ -264,11 +229,7 @@ impl TokenizerExporter {
                 merges
                     .iter()
                     .enumerate()
-                    .filter_map(|(rank, merge)| {
-                        merge
-                            .as_str()
-                            .map(|merge_str| (merge_str.to_string(), rank))
-                    })
+                    .filter_map(|(rank, merge)| merge.as_str().map(|merge_str| (merge_str.to_string(), rank)))
                     .collect()
             })
             .unwrap_or_default()

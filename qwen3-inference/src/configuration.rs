@@ -10,12 +10,13 @@ const CHECKPOINT_MAGIC: i32 = 0x616a6331;
 const CHECKPOINT_VERSION: i32 = 1;
 /// Size of the checkpoint header in bytes
 const HEADER_SIZE: usize = 256;
-/// Size of config structure in bytes (12 i32 fields)
-const CONFIG_SIZE: usize = 48;
+/// Size of config structure in bytes.
+const CONFIG_SIZE: usize = std::mem::size_of::<Config>();
 
 /// Configuration struct for transformer models.
 #[derive(Debug, Clone)]
 pub struct ModelConfig {
+    pub architecture_id: usize,
     pub dim: usize,
     pub hidden_dim: usize,
     pub n_layers: usize,
@@ -30,9 +31,11 @@ pub struct ModelConfig {
 
 /// Configuration struct for reading model parameters from checkpoint files.
 #[derive(Debug, Clone, Copy)]
+#[repr(C)]
 struct Config {
     pub magic_number: i32,
     pub version: i32,
+    pub architecture_id: i32,
     pub dim: i32,
     pub hidden_dim: i32,
     pub n_layers: i32,
@@ -52,6 +55,7 @@ impl TryInto<ModelConfig> for Config {
         validate_config(&self).with_context(|| "Invalid model configuration")?;
 
         Ok(ModelConfig {
+            architecture_id: self.architecture_id as usize,
             dim: self.dim as usize,
             hidden_dim: self.hidden_dim as usize,
             n_layers: self.n_layers as usize,
@@ -74,11 +78,7 @@ pub fn read_config(mapper: &mut MemoryMapper) -> Result<ModelConfig> {
     let data = mapper.get_bytes(CONFIG_SIZE)?;
 
     if data.len() != CONFIG_SIZE {
-        anyhow::bail!(
-            "Insufficient data for config: need {} bytes, got {}",
-            CONFIG_SIZE,
-            data.len()
-        );
+        anyhow::bail!("Insufficient data for config: need {} bytes, got {}", CONFIG_SIZE, data.len());
     }
 
     let mut cursor = Cursor::new(data);
@@ -86,15 +86,14 @@ pub fn read_config(mapper: &mut MemoryMapper) -> Result<ModelConfig> {
     // Use a macro to reduce repetitive error handling
     macro_rules! read_i32 {
         ($field:literal) => {
-            cursor
-                .read_i32::<LittleEndian>()
-                .with_context(|| format!("Failed to read {}", $field))?
+            cursor.read_i32::<LittleEndian>().with_context(|| format!("Failed to read {}", $field))?
         };
     }
 
     let config = Config {
         magic_number: read_i32!("magic number"),
         version: read_i32!("version"),
+        architecture_id: read_i32!("architecture id"),
         dim: read_i32!("dimension"),
         hidden_dim: read_i32!("hidden dimension"),
         n_layers: read_i32!("number of layers"),
@@ -117,24 +116,17 @@ pub fn read_config(mapper: &mut MemoryMapper) -> Result<ModelConfig> {
 fn validate_config(config: &Config) -> Result<()> {
     match config.magic_number {
         CHECKPOINT_MAGIC => {}
-        actual => anyhow::bail!(
-            "Invalid checkpoint magic number: expected {:#x}, got {:#x}",
-            CHECKPOINT_MAGIC,
-            actual
-        ),
+        actual => anyhow::bail!("Invalid checkpoint magic number: expected {:#x}, got {:#x}", CHECKPOINT_MAGIC, actual),
     }
 
     match config.version {
         CHECKPOINT_VERSION => {}
-        actual => anyhow::bail!(
-            "Unsupported checkpoint version: expected {}, got {}",
-            CHECKPOINT_VERSION,
-            actual
-        ),
+        actual => anyhow::bail!("Unsupported checkpoint version: expected {}, got {}", CHECKPOINT_VERSION, actual),
     }
 
     // Validate positive dimensions
     let dimensions = [
+        ("architecture_id", config.architecture_id),
         ("dim", config.dim),
         ("n_layers", config.n_layers),
         ("n_heads", config.n_heads),

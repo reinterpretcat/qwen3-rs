@@ -11,11 +11,7 @@ pub(crate) struct MemoryMapper {
 
 impl MemoryMapper {
     pub fn new(file: File) -> Result<Self> {
-        let mmap = unsafe {
-            memmap2::MmapOptions::new()
-                .map(&file)
-                .context("Failed to create memory mapping")?
-        };
+        let mmap = unsafe { memmap2::MmapOptions::new().map(&file).context("Failed to create memory mapping")? };
         Ok(Self { mmap, offset: 0 })
     }
 
@@ -45,11 +41,7 @@ impl MemoryMapper {
 
     pub fn get_bytes(&mut self, count: usize) -> Result<&[u8]> {
         if self.offset + count > self.mmap.len() {
-            anyhow::bail!(
-                "Insufficient data: need {} bytes, have {} remaining",
-                count,
-                self.mmap.len() - self.offset
-            );
+            anyhow::bail!("Insufficient data: need {} bytes, have {} remaining", count, self.mmap.len() - self.offset);
         }
 
         let result = &self.mmap[self.offset..self.offset + count];

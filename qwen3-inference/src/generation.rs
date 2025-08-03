@@ -1,13 +1,13 @@
+use crate::models::Transformer;
 use crate::sampler::Sampler;
 use crate::tokenizer::Tokenizer;
-use crate::transformer::Transformer;
 use anyhow::Result;
 use log::info;
 use std::io::{self, Write};
 use std::time::Instant;
 
-pub fn generate(
-    transformer: &mut Transformer,
+pub fn generate<T: Transformer>(
+    transformer: &mut T,
     tokenizer: &Tokenizer,
     sampler: &mut Sampler,
     prompt: Option<&str>,
@@ -19,7 +19,7 @@ pub fn generate(
         anyhow::bail!("Please provide a prompt");
     }
 
-    let seq_len = transformer.config.seq_len;
+    let seq_len = transformer.get_config().seq_len;
     let mut state = GenerationState::new(prompt_tokens[0]);
 
     while state.pos < seq_len {
@@ -47,15 +47,15 @@ pub fn generate(
     Ok(())
 }
 
-pub fn chat(
-    transformer: &mut Transformer,
+pub fn chat<T: Transformer>(
+    transformer: &mut T,
     tokenizer: &Tokenizer,
     sampler: &mut Sampler,
     cli_user_prompt: Option<&str>,
     system_prompt: Option<&str>,
 ) -> Result<()> {
     let stdin = io::stdin();
-    let seq_len = transformer.config.seq_len;
+    let seq_len = transformer.get_config().seq_len;
     let mut state = GenerationState::new(0);
     let mut user_turn = true;
     let mut next_token = 0;
@@ -84,14 +84,7 @@ pub fn chat(
                 break;
             }
             user_turn = false;
-        } else if handle_assistant_turn(
-            transformer,
-            tokenizer,
-            sampler,
-            &mut state,
-            &mut next_token,
-            &mut user_turn,
-        )? {
+        } else if handle_assistant_turn(transformer, tokenizer, sampler, &mut state, &mut next_token, &mut user_turn)? {
             continue; // Turn ended, continue to next iteration
         }
     }
@@ -99,9 +92,9 @@ pub fn chat(
     Ok(())
 }
 
-fn handle_user_turn(
+fn handle_user_turn<T: Transformer>(
     stdin: &io::Stdin,
-    transformer: &mut Transformer,
+    transformer: &mut T,
     tokenizer: &Tokenizer,
     sampler: &mut Sampler,
     state: &mut GenerationState,
@@ -121,7 +114,7 @@ fn handle_user_turn(
 
     // Process prompt tokens
     for &token in &prompt_tokens {
-        if state.pos >= transformer.config.seq_len {
+        if state.pos >= transformer.get_config().seq_len {
             break;
         }
 
@@ -132,8 +125,8 @@ fn handle_user_turn(
     Ok(true)
 }
 
-fn handle_assistant_turn(
-    transformer: &mut Transformer,
+fn handle_assistant_turn<T: Transformer>(
+    transformer: &mut T,
     tokenizer: &Tokenizer,
     sampler: &mut Sampler,
     state: &mut GenerationState,
@@ -157,8 +150,8 @@ fn handle_assistant_turn(
     Ok(false)
 }
 
-fn generate_next_token(
-    transformer: &mut Transformer,
+fn generate_next_token<T: Transformer>(
+    transformer: &mut T,
     sampler: &mut Sampler,
     token: usize,
     pos: usize,
@@ -192,16 +185,11 @@ fn get_user_input(stdin: &io::Stdin, pos: usize, cli_user_prompt: Option<&str>) 
     }
 }
 
-fn render_prompt(
-    pos: usize,
-    system_prompt: Option<&str>,
-    user_prompt: &str,
-    tokenizer: &Tokenizer,
-) -> String {
+fn render_prompt(pos: usize, system_prompt: Option<&str>, user_prompt: &str, tokenizer: &Tokenizer) -> String {
     match (pos, system_prompt) {
-        (0, Some(sys_prompt)) => tokenizer
-            .system_prompt_template
-            .replace("%s", &format!("{sys_prompt}\n{user_prompt}")),
+        (0, Some(sys_prompt)) => {
+            tokenizer.system_prompt_template.replace("%s", &format!("{sys_prompt}\n{user_prompt}"))
+        }
         _ => tokenizer.prompt_template.replace("%s", user_prompt),
     }
 }
@@ -214,10 +202,7 @@ struct TokenMetrics {
 
 impl TokenMetrics {
     fn new() -> Self {
-        Self {
-            start_time: None,
-            generated_count: 0,
-        }
+        Self { start_time: None, generated_count: 0 }
     }
 
     fn start_generation(&mut self) {
@@ -256,11 +241,7 @@ struct GenerationState {
 
 impl GenerationState {
     fn new(initial_token: usize) -> Self {
-        Self {
-            pos: 0,
-            token: initial_token,
-            metrics: TokenMetrics::new(),
-        }
+        Self { pos: 0, token: initial_token, metrics: TokenMetrics::new() }
     }
 
     fn reset(&mut self, initial_token: usize) {

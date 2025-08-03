@@ -12,7 +12,7 @@ use std::{
 
 /// Memory-efficient tensor reader from SafeTensors files
 #[derive(Debug)]
-pub(crate) struct TensorReader {
+pub struct TensorReader {
     safetensors_files: Vec<PathBuf>,   // Just store file paths, not data
     mmap_cache: Arc<Mutex<MmapCache>>, // LRU cache for memory mappings
 }
@@ -58,9 +58,7 @@ impl TensorReader {
                 safetensors
                     .tensor(tensor_name)
                     .ok()
-                    .and_then(|tensor_view| {
-                        Self::convert_tensor_to_f32(&tensor_view, tensor_name).ok()
-                    })
+                    .and_then(|tensor_view| Self::convert_tensor_to_f32(&tensor_view, tensor_name).ok())
             })
             .map_or(Ok(None), |data| Ok(Some(data)))
     }
@@ -77,11 +75,7 @@ impl TensorReader {
 
             all_tensor_names.insert(
                 filename.to_string_lossy().into_owned(),
-                safetensors
-                    .names()
-                    .iter()
-                    .map(|&name| name.clone())
-                    .collect(),
+                safetensors.names().iter().map(|&name| name.clone()).collect(),
             );
         }
 
@@ -89,10 +83,7 @@ impl TensorReader {
     }
 
     /// Convert tensor data to f32 based on its data type
-    fn convert_tensor_to_f32(
-        tensor_view: &safetensors::tensor::TensorView,
-        tensor_name: &str,
-    ) -> Result<Vec<f32>> {
+    fn convert_tensor_to_f32(tensor_view: &safetensors::tensor::TensorView, tensor_name: &str) -> Result<Vec<f32>> {
         let tensor_data = tensor_view.data();
         let shape = tensor_view.shape();
         let dtype = tensor_view.dtype();
@@ -109,12 +100,7 @@ impl TensorReader {
                 Ok(Self::convert_f32_data(tensor_data))
             }
             safetensors::Dtype::BF16 => {
-                Self::validate_tensor_size(
-                    tensor_data.len(),
-                    expected_elements * 2,
-                    tensor_name,
-                    "BF16",
-                )?;
+                Self::validate_tensor_size(tensor_data.len(), expected_elements * 2, tensor_name, "BF16")?;
                 Ok(Self::convert_bf16_data(tensor_data))
             }
             _ => anyhow::bail!("Unsupported tensor dtype {:?} for {}", dtype, tensor_name),
@@ -154,9 +140,7 @@ impl TensorReader {
     fn convert_bf16_data(data: &[u8]) -> Vec<f32> {
         data.chunks_exact(2)
             .map(|chunk| {
-                let [low, high] = chunk else {
-                    unreachable!("chunks_exact(2) guarantees 2 bytes")
-                };
+                let [low, high] = chunk else { unreachable!("chunks_exact(2) guarantees 2 bytes") };
                 // BF16 to F32: BF16 is the upper 16 bits of F32
                 let bf16_bits = u16::from_le_bytes([*low, *high]);
                 let f32_bits = (bf16_bits as u32) << 16;
@@ -167,26 +151,20 @@ impl TensorReader {
 
     /// Get or create a cached memory mapping for a file
     fn get_mmap(&self, path: &Path) -> Result<Arc<Mmap>> {
-        let mut cache = self
-            .mmap_cache
-            .lock()
-            .map_err(|_| anyhow::anyhow!("Failed to acquire cache lock"))?;
+        let mut cache = self.mmap_cache.lock().map_err(|_| anyhow::anyhow!("Failed to acquire cache lock"))?;
 
         if let Some(cached_mmap) = cache.get(path) {
             return Ok(cached_mmap);
         }
 
         // Create new mapping
-        let file =
-            File::open(path).with_context(|| format!("Failed to open {}", path.display()))?;
+        let file = File::open(path).with_context(|| format!("Failed to open {}", path.display()))?;
 
         // SAFETY: All file-backed memory map constructors are marked `unsafe` because of the potential for
         // *Undefined Behavior* (UB) using the map if the underlying file is subsequently modified, in or
         // out of process.
-        let mmap = Arc::new(
-            unsafe { Mmap::map(&file) }
-                .with_context(|| format!("Failed to memory map {}", path.display()))?,
-        );
+        let mmap =
+            Arc::new(unsafe { Mmap::map(&file) }.with_context(|| format!("Failed to memory map {}", path.display()))?);
 
         // Cache it with LRU eviction
         cache.insert(path.to_path_buf(), Arc::clone(&mmap));
@@ -196,10 +174,7 @@ impl TensorReader {
     /// Clear the memory mapping cache to free memory
     #[allow(dead_code)]
     pub fn clear_cache(&self) -> Result<()> {
-        let mut cache = self
-            .mmap_cache
-            .lock()
-            .map_err(|_| anyhow::anyhow!("Failed to acquire cache lock"))?;
+        let mut cache = self.mmap_cache.lock().map_err(|_| anyhow::anyhow!("Failed to acquire cache lock"))?;
         cache.clear();
         Ok(())
     }
@@ -215,11 +190,7 @@ struct MmapCache {
 
 impl MmapCache {
     fn new(max_size: usize) -> Self {
-        Self {
-            cache: HashMap::new(),
-            access_order: VecDeque::new(),
-            max_size,
-        }
+        Self { cache: HashMap::new(), access_order: VecDeque::new(), max_size }
     }
 
     fn get(&mut self, path: &Path) -> Option<Arc<Mmap>> {

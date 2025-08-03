@@ -4,20 +4,22 @@
 
 mod configuration;
 mod generation;
+mod layers;
+mod models;
 mod sampler;
 mod tensor;
 mod tokenizer;
-mod transformer;
 mod utils;
 
 use anyhow::Result;
 use log::debug;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+pub use crate::models::{Transformer, TransformerBuilder};
+
 use crate::generation::{chat, generate};
 use crate::sampler::Sampler;
 use crate::tokenizer::Tokenizer;
-use crate::transformer::TransformerBuilder;
 
 #[derive(Debug, Clone)]
 pub struct InferenceConfig {
@@ -98,25 +100,14 @@ impl InferenceConfigBuilder {
             prompt: self.prompt,
             system_prompt: self.system_prompt,
             enable_thinking: self.enable_thinking.unwrap_or(false),
-            seed: self.seed.unwrap_or_else(|| {
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs()
-            }),
+            seed: self.seed.unwrap_or_else(|| SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()),
         })
     }
 }
 
 /// Runs inference.
-pub fn run_inference(inference_config: InferenceConfig) -> Result<()> {
+pub fn run_inference<T: Transformer>(mut transformer: T, inference_config: InferenceConfig) -> Result<()> {
     debug!("{inference_config:#?}");
-
-    let mut transformer = TransformerBuilder::new(&inference_config.checkpoint_path)
-        .with_ctx_length(inference_config.ctx_length)
-        .build()?;
-
-    debug!("{transformer:#?}");
 
     let transformer_config = transformer.get_config();
 
@@ -141,13 +132,7 @@ pub fn run_inference(inference_config: InferenceConfig) -> Result<()> {
     // Run
     match inference_config.mode.as_str() {
         "generate" => generate(&mut transformer, &tokenizer, &mut sampler, prompt),
-        "chat" => chat(
-            &mut transformer,
-            &tokenizer,
-            &mut sampler,
-            prompt,
-            system_prompt,
-        ),
+        "chat" => chat(&mut transformer, &tokenizer, &mut sampler, prompt, system_prompt),
         _ => anyhow::bail!("Unknown mode: {inference_config:?}"),
     }
 }

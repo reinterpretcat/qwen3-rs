@@ -1,4 +1,4 @@
-use crate::transformer::softmax;
+use crate::layers::softmax;
 
 /// Stores a probability and its associated index (token id).
 #[derive(Clone, Debug)]
@@ -30,19 +30,10 @@ impl Sampler {
     pub fn new(vocab_size: usize, temperature: f32, topp: f32, rng_seed: u64) -> Self {
         assert!(vocab_size > 0, "Vocab size must be positive");
         assert!(temperature >= 0.0, "Temperature must be non-negative");
-        assert!(
-            (0.0..=1.0).contains(&topp),
-            "Top-p must be between 0.0 and 1.0"
-        );
+        assert!((0.0..=1.0).contains(&topp), "Top-p must be between 0.0 and 1.0");
 
         Self {
-            probindex: vec![
-                ProbIndex {
-                    prob: 0.0,
-                    index: 0
-                };
-                vocab_size
-            ],
+            probindex: vec![ProbIndex { prob: 0.0, index: 0 }; vocab_size],
             temperature,
             topp: topp.clamp(0.0, 1.0),
             rng_state: rng_seed,
@@ -64,12 +55,7 @@ impl Sampler {
 
     /// Returns the index of the maximum logit (greedy decoding).
     fn sample_argmax(logits: &[f32]) -> usize {
-        logits
-            .iter()
-            .enumerate()
-            .max_by(|(_, a), (_, b)| a.total_cmp(b))
-            .map(|(i, _)| i)
-            .unwrap_or_default()
+        logits.iter().enumerate().max_by(|(_, a), (_, b)| a.total_cmp(b)).map(|(i, _)| i).unwrap_or_default()
     }
 
     /// Multinomial sampling from a probability distribution.
