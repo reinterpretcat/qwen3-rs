@@ -90,8 +90,8 @@ pub fn dequantize(qx: &QuantizedTensor, x: &mut [f32], group_size: usize) {
 /// * `group_size` - Number of elements per quantization group
 pub fn quantize(qx: &mut QuantizedTensor, x: &[f32], size: usize, group_size: usize) {
     debug_assert_eq!(x.len(), size);
-    debug_assert_eq!(qx.q.len(), size);
-    debug_assert_eq!(qx.s.len(), size / group_size);
+    debug_assert!(qx.q.len() >= size, "Quantized buffer too small: {} < {}", qx.q.len(), size);
+    debug_assert!(qx.s.len() >= size / group_size, "Scale buffer too small: {} < {}", qx.s.len(), size / group_size);
 
     const Q_MAX: f32 = 127.0;
     let num_groups = size / group_size;

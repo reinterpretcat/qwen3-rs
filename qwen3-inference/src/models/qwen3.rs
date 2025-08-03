@@ -129,9 +129,10 @@ impl Qwen3TransformerBlock {
 
     fn forward(&self, pos: usize, state: &mut RunState) {
         // Attention block with residual connection
-        self.attn_norm.forward(&mut state.xb, &state.x);
+        let dim = state.x.len();
+        self.attn_norm.forward(&mut state.xb[..dim], &state.x);
 
-        quantize(&mut state.xq, &state.xb, state.xb.len(), self.attention.wq.group_size);
+        quantize(&mut state.xq, &state.xb[..dim], dim, self.attention.wq.group_size);
 
         self.attention.forward(pos, self.layer_idx, state);
 
@@ -142,9 +143,9 @@ impl Qwen3TransformerBlock {
         state.x.iter_mut().zip(state.xb2.iter()).for_each(|(x_val, &delta)| *x_val += delta);
 
         // Feed-forward block with residual connection
-        self.ffn_norm.forward(&mut state.xb, &state.x);
+        self.ffn_norm.forward(&mut state.xb[..dim], &state.x);
 
-        quantize(&mut state.xq, &state.xb, state.xb.len(), self.feed_forward.w1.group_size);
+        quantize(&mut state.xq, &state.xb[..dim], dim, self.feed_forward.w1.group_size);
 
         self.feed_forward.forward(state);
 
