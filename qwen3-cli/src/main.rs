@@ -4,7 +4,7 @@ use anyhow::Result;
 use clap::{Arg, ArgMatches, Command};
 use log::{error, info};
 use qwen3_export::export_model;
-use qwen3_inference::{InferenceConfigBuilder, run_inference};
+use qwen3_inference::{InferenceConfigBuilder, TransformerBuilder, run_inference};
 
 /// Define the export subcommand.
 fn export_subcommand() -> Command {
@@ -156,7 +156,9 @@ fn run_inference_command(matches: &ArgMatches) -> Result<()> {
         .build()
         .map_err(|e| anyhow::anyhow!(e))?;
 
-    run_inference(config).map_err(|e| anyhow::anyhow!("Inference failed: {e}"))?;
+    let transformer = TransformerBuilder::new(&config.checkpoint_path).with_ctx_length(config.ctx_length).build()?;
+
+    run_inference(transformer, config).map_err(|e| anyhow::anyhow!("Inference failed: {e}"))?;
 
     Ok(())
 }

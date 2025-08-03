@@ -1,13 +1,13 @@
+use crate::models::Transformer;
 use crate::sampler::Sampler;
 use crate::tokenizer::Tokenizer;
-use crate::transformer::Transformer;
 use anyhow::Result;
 use log::info;
 use std::io::{self, Write};
 use std::time::Instant;
 
-pub fn generate(
-    transformer: &mut Transformer,
+pub fn generate<T: Transformer>(
+    transformer: &mut T,
     tokenizer: &Tokenizer,
     sampler: &mut Sampler,
     prompt: Option<&str>,
@@ -19,7 +19,7 @@ pub fn generate(
         anyhow::bail!("Please provide a prompt");
     }
 
-    let seq_len = transformer.config.seq_len;
+    let seq_len = transformer.get_config().seq_len;
     let mut state = GenerationState::new(prompt_tokens[0]);
 
     while state.pos < seq_len {
@@ -47,15 +47,15 @@ pub fn generate(
     Ok(())
 }
 
-pub fn chat(
-    transformer: &mut Transformer,
+pub fn chat<T: Transformer>(
+    transformer: &mut T,
     tokenizer: &Tokenizer,
     sampler: &mut Sampler,
     cli_user_prompt: Option<&str>,
     system_prompt: Option<&str>,
 ) -> Result<()> {
     let stdin = io::stdin();
-    let seq_len = transformer.config.seq_len;
+    let seq_len = transformer.get_config().seq_len;
     let mut state = GenerationState::new(0);
     let mut user_turn = true;
     let mut next_token = 0;
@@ -92,9 +92,9 @@ pub fn chat(
     Ok(())
 }
 
-fn handle_user_turn(
+fn handle_user_turn<T: Transformer>(
     stdin: &io::Stdin,
-    transformer: &mut Transformer,
+    transformer: &mut T,
     tokenizer: &Tokenizer,
     sampler: &mut Sampler,
     state: &mut GenerationState,
@@ -114,7 +114,7 @@ fn handle_user_turn(
 
     // Process prompt tokens
     for &token in &prompt_tokens {
-        if state.pos >= transformer.config.seq_len {
+        if state.pos >= transformer.get_config().seq_len {
             break;
         }
 
@@ -125,8 +125,8 @@ fn handle_user_turn(
     Ok(true)
 }
 
-fn handle_assistant_turn(
-    transformer: &mut Transformer,
+fn handle_assistant_turn<T: Transformer>(
+    transformer: &mut T,
     tokenizer: &Tokenizer,
     sampler: &mut Sampler,
     state: &mut GenerationState,
@@ -150,8 +150,8 @@ fn handle_assistant_turn(
     Ok(false)
 }
 
-fn generate_next_token(
-    transformer: &mut Transformer,
+fn generate_next_token<T: Transformer>(
+    transformer: &mut T,
     sampler: &mut Sampler,
     token: usize,
     pos: usize,

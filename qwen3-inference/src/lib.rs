@@ -4,21 +4,22 @@
 
 mod configuration;
 mod generation;
+mod layers;
 mod models;
 mod sampler;
 mod tensor;
 mod tokenizer;
-mod transformer;
 mod utils;
 
 use anyhow::Result;
 use log::debug;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+pub use crate::models::{Transformer, TransformerBuilder};
+
 use crate::generation::{chat, generate};
 use crate::sampler::Sampler;
 use crate::tokenizer::Tokenizer;
-use crate::transformer::TransformerBuilder;
 
 #[derive(Debug, Clone)]
 pub struct InferenceConfig {
@@ -105,14 +106,8 @@ impl InferenceConfigBuilder {
 }
 
 /// Runs inference.
-pub fn run_inference(inference_config: InferenceConfig) -> Result<()> {
+pub fn run_inference<T: Transformer>(mut transformer: T, inference_config: InferenceConfig) -> Result<()> {
     debug!("{inference_config:#?}");
-
-    let mut transformer = TransformerBuilder::new(&inference_config.checkpoint_path)
-        .with_ctx_length(inference_config.ctx_length)
-        .build()?;
-
-    debug!("{transformer:#?}");
 
     let transformer_config = transformer.get_config();
 

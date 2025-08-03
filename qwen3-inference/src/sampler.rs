@@ -1,4 +1,4 @@
-use crate::transformer::softmax;
+use crate::layers::softmax;
 
 /// Stores a probability and its associated index (token id).
 #[derive(Clone, Debug)]
