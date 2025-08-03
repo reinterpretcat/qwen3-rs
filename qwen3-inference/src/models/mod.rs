@@ -2,6 +2,7 @@ use std::fs::File;
 
 use crate::{
     configuration::{ModelConfig, read_config},
+    tensor::QuantizedTensor,
     utils::MemoryMapper,
 };
 use anyhow::{Context, Result};
@@ -70,4 +71,40 @@ impl TransformerBuilder {
             x => anyhow::bail!("Unknown architecture_id: {x}"),
         }
     }
+}
+
+/// Reads multiple quantized tensors from memory mapper.
+///
+/// Each quantized tensor consists of:
+/// 1. Quantized weights (i8 values)
+/// 2. Scale factors (f32 values)
+///
+/// The scale factors are grouped according to the quantization group size.
+pub(crate) fn create_quantized_tensors(
+    mapper: &mut MemoryMapper,
+    n_tensors: usize,
+    size_each: usize,
+    group_size: usize,
+) -> Result<Vec<QuantizedTensor>> {
+    (0..n_tensors)
+        .map(|i| {
+            // Read quantized values
+            let q_bytes =
+                mapper.get_bytes(size_each).with_context(|| format!("Failed to read quantized tensor {i} data"))?;
+
+            // Convert bytes to i8 (avoiding copy by using unsafe)
+            let q_slice = unsafe { std::slice::from_raw_parts(q_bytes.as_ptr() as *const i8, size_each) };
+
+            // Calculate and read scale factors
+            let s_len = size_each / group_size;
+            let s_slice =
+                mapper.get_f32_slice(s_len).with_context(|| format!("Failed to read scale factors for tensor {i}"))?;
+
+            // Convert to 'static lifetime using unsafe transmute
+            let q_static = unsafe { std::mem::transmute::<&[i8], &'static [i8]>(q_slice) };
+            let s_static = unsafe { std::mem::transmute::<&[f32], &'static [f32]>(s_slice) };
+
+            Ok(QuantizedTensor::from_slices(q_static, s_static))
+        })
+        .collect()
 }
