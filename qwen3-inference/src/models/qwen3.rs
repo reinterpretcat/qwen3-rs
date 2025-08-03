@@ -5,10 +5,12 @@ use anyhow::{Context, Result};
 pub struct Qwen3Transformer {
     config: ModelConfig,
     token_embedding: TokenEmbedding,
-    blocks: Vec<Qwen3TransformerBlock>,
+    blocks: Vec<TransformerBlock>,
     final_norm: RMSNorm,
     lm_head: Linear,
-    state: RunState,
+    buffers: TransformerBlockBuffers,
+    /// Final output logits over vocabulary [vocab_size]
+    logits: Vec<f32>,
     _mapper: MemoryMapper,
 }
 
@@ -16,8 +18,11 @@ impl Qwen3Transformer {
     pub(crate) fn new(config: ModelConfig, mut mapper: MemoryMapper) -> Result<Self> {
         let weights = load_weights(&mut mapper, &config)?;
 
-        // Initialize runtime state
-        let state = RunState::new(&config)?;
+        // Initialize block buffers
+        let buffers = TransformerBlockBuffers::new(&config)?;
+
+        // Output buffer
+        let logits = vec![0.0; config.vocab_size];
 
         // Create transformer blocks
         let mut blocks = Vec::new();
@@ -41,18 +46,13 @@ impl Qwen3Transformer {
             blocks,
             final_norm,
             lm_head,
-            state,
+            buffers,
+            logits,
             _mapper: mapper, // Keep the mapper alive for the lifetime of the transformer
         })
     }
 
     /// Forward pass through the transformer for autoregressive generation
-    ///
-    /// **Process Flow:**
-    /// 1. **Token Embedding**: Convert token ID to dense vector representation
-    /// 2. **Transformer Blocks**: Process through N decoder layers with self-attention and FFN
-    /// 3. **Final Normalization**: Apply RMSNorm to output hidden states
-    /// 4. **Classification Head**: Project to vocabulary space for next-token prediction
     ///
     /// **Arguments:**
     /// - `token`: Current input token ID
@@ -62,21 +62,21 @@ impl Qwen3Transformer {
     /// - Probability distribution over vocabulary (logits) for next token prediction
     pub fn forward(&mut self, token: usize, pos: usize) -> &[f32] {
         // Token embedding
-        self.token_embedding.forward(token, &mut self.state.x);
+        self.token_embedding.forward(token, &mut self.buffers.x);
 
         // Process through transformer blocks
         for block in &self.blocks {
-            block.forward(pos, &mut self.state);
+            block.forward(pos, &mut self.buffers);
         }
 
         // Final normalization
-        self.final_norm.forward_inplace(&mut self.state.x);
+        self.final_norm.forward_inplace(&mut self.buffers.x);
 
         // Classification head
-        quantize(&mut self.state.xq, &self.state.x, self.state.x.len(), self.lm_head.group_size);
-        self.lm_head.forward(&mut self.state.logits, &self.state.xq);
+        quantize(&mut self.buffers.xq, &self.buffers.x, self.buffers.x.len(), self.lm_head.group_size);
+        self.lm_head.forward(&mut self.logits, &self.buffers.xq);
 
-        &self.state.logits
+        &self.logits
     }
 
     pub fn get_config(&self) -> &ModelConfig {
@@ -108,7 +108,7 @@ impl std::fmt::Debug for Qwen3Transformer {
 }
 
 /// Transformer Block - Core decoder layer combining self-attention and feed-forward
-pub struct Qwen3TransformerBlock {
+pub struct TransformerBlock {
     pub attn_norm: RMSNorm,
     pub attention: MultiHeadAttention,
     pub ffn_norm: RMSNorm,
@@ -116,7 +116,7 @@ pub struct Qwen3TransformerBlock {
     pub layer_idx: usize,
 }
 
-impl Qwen3TransformerBlock {
+impl TransformerBlock {
     pub fn new(
         attn_norm: RMSNorm,
         attention: MultiHeadAttention,
@@ -127,34 +127,55 @@ impl Qwen3TransformerBlock {
         Self { attn_norm, attention, ffn_norm, feed_forward, layer_idx }
     }
 
-    fn forward(&self, pos: usize, state: &mut RunState) {
+    fn forward(&self, pos: usize, buffers: &mut TransformerBlockBuffers) {
         // Attention block with residual connection
-        let dim = state.x.len();
-        self.attn_norm.forward(&mut state.xb[..dim], &state.x);
+        let dim = buffers.x.len();
+        self.attn_norm.forward(&mut buffers.xb[..dim], &buffers.x);
 
-        quantize(&mut state.xq, &state.xb[..dim], dim, self.attention.wq.group_size);
+        quantize(&mut buffers.xq, &buffers.xb[..dim], dim, self.attention.wq.group_size);
 
-        self.attention.forward(pos, self.layer_idx, state);
+        self.attention.forward(
+            pos,
+            self.layer_idx,
+            AttentionBuffers {
+                xq: &buffers.xq,
+                q: &mut buffers.q,
+                xb: &mut buffers.xb,
+                att: &mut buffers.att,
+                temp: &mut buffers.temp,
+                key_cache: &mut buffers.key_cache,
+                value_cache: &mut buffers.value_cache,
+            },
+        );
 
-        quantize(&mut state.xq, &state.xb, state.xb.len(), self.attention.wo.group_size);
-        self.attention.wo.forward(&mut state.xb2, &state.xq);
+        quantize(&mut buffers.xq, &buffers.xb, buffers.xb.len(), self.attention.wo.group_size);
+        self.attention.wo.forward(&mut buffers.xb2, &buffers.xq);
 
         // Residual connection
-        state.x.iter_mut().zip(state.xb2.iter()).for_each(|(x_val, &delta)| *x_val += delta);
+        buffers.x.iter_mut().zip(buffers.xb2.iter()).for_each(|(x_val, &delta)| *x_val += delta);
 
         // Feed-forward block with residual connection
-        self.ffn_norm.forward(&mut state.xb[..dim], &state.x);
+        self.ffn_norm.forward(&mut buffers.xb[..dim], &buffers.x);
 
-        quantize(&mut state.xq, &state.xb[..dim], dim, self.feed_forward.w1.group_size);
+        quantize(&mut buffers.xq, &buffers.xb[..dim], dim, self.feed_forward.w1.group_size);
 
-        self.feed_forward.forward(state);
+        // Create feed-forward buffer context
+        let ffn_buffers = FeedForwardBuffers {
+            xq: &buffers.xq,
+            hb: &mut buffers.hb,
+            hb2: &mut buffers.hb2,
+            hq: &mut buffers.hq,
+            xb: &mut buffers.xb,
+        };
 
-        // Residual connection
-        state.x.iter_mut().zip(state.xb.iter()).for_each(|(x_val, &delta)| *x_val += delta);
+        self.feed_forward.forward(ffn_buffers);
+
+        // Residual connection (only use first dim elements of xb)
+        buffers.x.iter_mut().zip(buffers.xb[..dim].iter()).for_each(|(x_val, &delta)| *x_val += delta);
     }
 }
 
-impl std::fmt::Debug for Qwen3TransformerBlock {
+impl std::fmt::Debug for TransformerBlock {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TransformerBlock")
             .field("layer_idx", &self.layer_idx)
@@ -174,7 +195,7 @@ impl std::fmt::Debug for Qwen3TransformerBlock {
 /// 3. Attention weights (quantized)
 /// 4. Feed-forward weights (quantized)
 /// 5. Classification weights (quantized, may be shared)
-fn load_weights(mapper: &mut MemoryMapper, config: &ModelConfig) -> Result<Qwen3TransformerWeights> {
+fn load_weights(mapper: &mut MemoryMapper, config: &ModelConfig) -> Result<TransformerWeights> {
     let ModelConfig {
         group_size,
         dim,
@@ -236,7 +257,7 @@ fn load_weights(mapper: &mut MemoryMapper, config: &ModelConfig) -> Result<Qwen3
             .expect("Expected exactly one classification tensor")
     };
 
-    Ok(Qwen3TransformerWeights {
+    Ok(TransformerWeights {
         token_embedding_table,
         rms_att_weight,
         rms_ffn_weight,
@@ -293,8 +314,8 @@ fn create_quantized_tensors(
 fn create_transformer_block(
     model_config: &ModelConfig,
     layer_idx: usize,
-    weights: &Qwen3TransformerWeights,
-) -> Result<Qwen3TransformerBlock> {
+    weights: &TransformerWeights,
+) -> Result<TransformerBlock> {
     let dim = model_config.dim;
     let head_dim = model_config.head_dim;
     let all_heads_dim = model_config.n_heads * head_dim;
@@ -330,7 +351,7 @@ fn create_transformer_block(
 
     let feed_forward = FeedForward::new(w1, w2, w3);
 
-    Ok(Qwen3TransformerBlock::new(attn_norm, attention, ffn_norm, feed_forward, layer_idx))
+    Ok(TransformerBlock::new(attn_norm, attention, ffn_norm, feed_forward, layer_idx))
 }
 
 /// Contains all the learned parameters for the transformer model.
@@ -338,7 +359,7 @@ fn create_transformer_block(
 /// This structure holds both quantized weights (for memory efficiency) and
 /// pre-computed values like the dequantized token embedding table.
 #[derive(Debug)]
-struct Qwen3TransformerWeights {
+struct TransformerWeights {
     /// Pre-dequantized token embedding table for fast lookup during inference
     /// Shape: [vocab_size, dim]
     pub token_embedding_table: Vec<f32>,
@@ -382,4 +403,77 @@ struct Qwen3TransformerWeights {
     /// Classification head weights (may be shared with token embeddings)
     /// Shape: [dim, vocab_size]
     pub wcls: QuantizedTensor,
+}
+
+/// Buffer context for transformer block operations (owned buffers)
+pub struct TransformerBlockBuffers {
+    /// Primary activation buffer (input/output) [dim]
+    pub x: Vec<f32>,
+
+    /// Multi-purpose working buffer [all_heads_dim]
+    pub xb: Vec<f32>,
+
+    /// Secondary buffer for residual connections [dim]
+    pub xb2: Vec<f32>,
+
+    /// Quantized buffer for attention/FFN operations
+    pub xq: QuantizedTensor,
+
+    /// Query buffer for attention computation [all_heads_dim]
+    pub q: Vec<f32>,
+
+    /// Attention weights buffer [n_heads * seq_len]
+    pub att: Vec<f32>,
+
+    /// FFN gate projection buffer [hidden_dim]
+    pub hb: Vec<f32>,
+
+    /// FFN up projection buffer [hidden_dim]
+    pub hb2: Vec<f32>,
+
+    /// Quantized FFN buffer [hidden_dim]
+    pub hq: QuantizedTensor,
+
+    /// Key-Value cache (full cache, shared across all layers)
+    pub key_cache: Vec<f32>,
+    pub value_cache: Vec<f32>,
+
+    /// Temporary workspace for intermediate computations [head_dim]
+    pub temp: Vec<f32>,
+}
+
+impl TransformerBlockBuffers {
+    /// Creates a new buffer state with pre-allocated buffers based on model configuration.
+    pub fn new(config: &ModelConfig) -> Result<Self> {
+        let ModelConfig { group_size, n_heads, head_dim, n_kv_heads, dim, hidden_dim, seq_len, n_layers, .. } = *config;
+
+        let all_heads_dim = n_heads * head_dim;
+        let kv_dim = n_kv_heads * head_dim;
+
+        Ok(Self {
+            // Core activation buffers
+            x: vec![0.0; dim],
+            xb: vec![0.0; all_heads_dim],
+            xb2: vec![0.0; dim],
+
+            // Quantized buffers for efficient computation
+            xq: QuantizedTensor::new(all_heads_dim, group_size),
+
+            // Attention-specific buffers
+            q: vec![0.0; all_heads_dim],
+            att: vec![0.0; n_heads * seq_len],
+
+            // FFN buffers
+            hb: vec![0.0; hidden_dim],
+            hb2: vec![0.0; hidden_dim],
+            hq: QuantizedTensor::new(hidden_dim, group_size),
+
+            // KV cache for autoregressive generation
+            key_cache: vec![0.0; n_layers * seq_len * kv_dim],
+            value_cache: vec![0.0; n_layers * seq_len * kv_dim],
+
+            // Temporary workspace for computations
+            temp: vec![0.0; head_dim],
+        })
+    }
 }

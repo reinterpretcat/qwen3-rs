@@ -1,6 +1,5 @@
 use crate::configuration::ModelConfig;
 use crate::tensor::{QuantizedTensor, quantize};
-use anyhow::Result;
 use rayon::prelude::*;
 
 /// Epsilon value for numerical stability in normalization
@@ -8,6 +7,52 @@ const EPSILON: f32 = 1e-6;
 
 /// Base frequency for RoPE (Rotary Position Embedding)
 const ROPE_BASE_FREQ: f32 = 1e6;
+
+/// Buffer context for Multi-Head Attention operations
+///
+/// Contains only the buffers needed for attention computation, avoiding
+/// the need to pass the entire RunState to the attention layer.
+pub struct AttentionBuffers<'a> {
+    /// Input quantized tensor (read-only)
+    pub xq: &'a QuantizedTensor,
+
+    /// Query buffer for attention computation [all_heads_dim]
+    pub q: &'a mut [f32],
+
+    /// Multi-head attention output buffer [all_heads_dim]
+    pub xb: &'a mut [f32],
+
+    /// Attention weights buffer [n_heads * seq_len]
+    pub att: &'a mut [f32],
+
+    /// Temporary workspace for intermediate computations [head_dim]
+    pub temp: &'a mut [f32],
+
+    /// Key-Value cache for autoregressive generation
+    pub key_cache: &'a mut [f32],
+    pub value_cache: &'a mut [f32],
+}
+
+/// Buffer context for Feed-Forward Network operations
+///
+/// Contains only the buffers needed for feed-forward computation, avoiding
+/// the need to pass the entire RunState to the feed-forward layer.
+pub struct FeedForwardBuffers<'a> {
+    /// Input quantized tensor (read-only)
+    pub xq: &'a QuantizedTensor,
+
+    /// Gate projection output buffer [hidden_dim]
+    pub hb: &'a mut [f32],
+
+    /// Up projection output buffer [hidden_dim]
+    pub hb2: &'a mut [f32],
+
+    /// Quantized hidden buffer for intermediate computations [hidden_dim]
+    pub hq: &'a mut QuantizedTensor,
+
+    /// Final output buffer [all_heads_dim, but only first dim elements used]
+    pub xb: &'a mut [f32],
+}
 
 /// Token embedding layer - converts token IDs to dense vectors
 ///
@@ -239,37 +284,37 @@ impl MultiHeadAttention {
         }
     }
 
-    pub fn forward(&self, pos: usize, layer_idx: usize, state: &mut RunState) {
+    pub fn forward(&self, pos: usize, layer_idx: usize, mut buffers: AttentionBuffers<'_>) {
         let kv_dim = self.n_kv_heads * self.head_dim;
         let kv_cache_offset = layer_idx * self.seq_len * kv_dim;
         let current_pos_offset = kv_cache_offset + pos * kv_dim;
 
         // Compute Q, K, V projections
-        self.wq.forward(&mut state.q, &state.xq);
-        self.wk.forward(&mut state.key_cache[current_pos_offset..], &state.xq);
-        self.wv.forward(&mut state.value_cache[current_pos_offset..], &state.xq);
+        self.wq.forward(buffers.q, buffers.xq);
+        self.wk.forward(&mut buffers.key_cache[current_pos_offset..], buffers.xq);
+        self.wv.forward(&mut buffers.value_cache[current_pos_offset..], buffers.xq);
 
         // Apply normalization and RoPE
         let rope_freqs = self.rope.compute_freqs(pos);
-        self.apply_qk_normalization_and_rope(current_pos_offset, &rope_freqs, state);
+        self.apply_qk_normalization_and_rope(current_pos_offset, &rope_freqs, &mut buffers);
 
         // Compute attention
-        self.compute_attention(pos, kv_cache_offset, state);
+        self.compute_attention(pos, kv_cache_offset, &mut buffers);
     }
 
     fn apply_qk_normalization_and_rope(
         &self,
         current_pos_offset: usize,
         rope_freqs: &[(f32, f32)],
-        state: &mut RunState,
+        buffers: &mut AttentionBuffers<'_>,
     ) {
         // Process Query heads
         for head_idx in 0..self.n_heads {
             let q_range = head_idx * self.head_dim..(head_idx + 1) * self.head_dim;
-            let q_slice = &mut state.q[q_range.clone()];
+            let q_slice = &mut buffers.q[q_range.clone()];
 
-            state.temp_workspace[..self.head_dim].copy_from_slice(q_slice);
-            self.q_norm.forward(q_slice, &state.temp_workspace[..self.head_dim]);
+            buffers.temp[..self.head_dim].copy_from_slice(q_slice);
+            self.q_norm.forward(q_slice, &buffers.temp[..self.head_dim]);
             self.rope.apply(q_slice, rope_freqs);
         }
 
@@ -277,22 +322,22 @@ impl MultiHeadAttention {
         for head_idx in 0..self.n_kv_heads {
             let k_range =
                 current_pos_offset + head_idx * self.head_dim..current_pos_offset + (head_idx + 1) * self.head_dim;
-            let k_slice = &mut state.key_cache[k_range];
+            let k_slice = &mut buffers.key_cache[k_range];
 
-            state.temp_workspace[..self.head_dim].copy_from_slice(k_slice);
-            self.k_norm.forward(k_slice, &state.temp_workspace[..self.head_dim]);
+            buffers.temp[..self.head_dim].copy_from_slice(k_slice);
+            self.k_norm.forward(k_slice, &buffers.temp[..self.head_dim]);
             self.rope.apply(k_slice, rope_freqs);
         }
     }
 
-    fn compute_attention(&self, pos: usize, kv_cache_offset: usize, state: &mut RunState) {
+    fn compute_attention(&self, pos: usize, kv_cache_offset: usize, buffers: &mut AttentionBuffers<'_>) {
         let attention_scale = (self.head_dim as f32).sqrt().recip();
         let kv_dim = self.n_kv_heads * self.head_dim;
 
-        state
+        buffers
             .att
             .par_chunks_mut(self.seq_len)
-            .zip(state.xb.par_chunks_mut(self.head_dim))
+            .zip(buffers.xb.par_chunks_mut(self.head_dim))
             .zip((0..self.n_heads).into_par_iter())
             .for_each(|((att_slice, xb_slice), head_idx)| {
                 let q_range = head_idx * self.head_dim..(head_idx + 1) * self.head_dim;
@@ -306,9 +351,9 @@ impl MultiHeadAttention {
                     let k_cache_start = kv_cache_offset + time_step * kv_dim + kv_head_idx * self.head_dim;
                     let k_cache_end = k_cache_start + self.head_dim;
 
-                    *att_score = state.q[q_range.clone()]
+                    *att_score = buffers.q[q_range.clone()]
                         .iter()
-                        .zip(&state.key_cache[k_cache_start..k_cache_end])
+                        .zip(&buffers.key_cache[k_cache_start..k_cache_end])
                         .map(|(&q, &k)| q * k)
                         .sum::<f32>()
                         * attention_scale;
@@ -326,7 +371,7 @@ impl MultiHeadAttention {
 
                     xb_slice
                         .iter_mut()
-                        .zip(&state.value_cache[v_cache_start..v_cache_end])
+                        .zip(&buffers.value_cache[v_cache_start..v_cache_end])
                         .for_each(|(out, &value)| *out += attention_weight * value);
                 }
             });
@@ -377,20 +422,20 @@ impl FeedForward {
         Self { w1, w2, w3 }
     }
 
-    pub fn forward(&self, state: &mut RunState) {
+    pub fn forward(&self, buffers: FeedForwardBuffers<'_>) {
         // Gate and up projections
-        self.w1.forward(&mut state.hb, &state.xq);
-        self.w3.forward(&mut state.hb2, &state.xq);
+        self.w1.forward(buffers.hb, buffers.xq);
+        self.w3.forward(buffers.hb2, buffers.xq);
 
         // Apply SwiGLU activation
-        state.hb.iter_mut().zip(state.hb2.iter()).for_each(|(gate_val, &linear_val)| {
+        buffers.hb.iter_mut().zip(buffers.hb2.iter()).for_each(|(gate_val, &linear_val)| {
             let swish_output = *gate_val * (1.0f32 + (-*gate_val).exp()).recip();
             *gate_val = swish_output * linear_val;
         });
 
         // Down projection
-        quantize(&mut state.hq, &state.hb, state.hb.len(), self.w2.group_size);
-        self.w2.forward(&mut state.xb, &state.hq);
+        quantize(buffers.hq, buffers.hb, buffers.hb.len(), self.w2.group_size);
+        self.w2.forward(buffers.xb, buffers.hq);
     }
 }
 
@@ -417,112 +462,4 @@ pub(crate) fn softmax(x: &mut [f32]) {
         .sum::<f32>();
     let inv_sum = sum.recip();
     x.iter_mut().for_each(|val| *val *= inv_sum);
-}
-
-/// Runtime state for transformer inference.
-///
-/// This structure contains all the temporary buffers and caches needed
-/// during model execution. Buffers are pre-allocated to avoid allocation
-/// overhead during inference.
-#[derive(Debug)]
-pub struct RunState {
-    /// Primary activation buffer for current layer input
-    /// Shape: [dim]
-    pub x: Vec<f32>,
-
-    /// Secondary activation buffer for attention computations
-    /// Shape: [n_heads * head_dim]
-    pub xb: Vec<f32>,
-
-    /// Tertiary activation buffer for residual connections
-    /// Shape: [dim]
-    pub xb2: Vec<f32>,
-
-    /// Hidden state buffer for feed-forward computations
-    /// Shape: [hidden_dim]
-    pub hb: Vec<f32>,
-
-    /// Secondary hidden buffer for FFN gate operations
-    /// Shape: [hidden_dim]
-    pub hb2: Vec<f32>,
-
-    /// Quantized activation buffer for efficient computation
-    /// Max shape: [n_heads * head_dim]
-    pub xq: QuantizedTensor,
-
-    /// Quantized hidden buffer for FFN operations
-    /// Max shape: [hidden_dim]
-    pub hq: QuantizedTensor,
-
-    /// Query buffer for attention computation
-    /// Shape: [n_heads * head_dim]
-    pub q: Vec<f32>,
-
-    /// Attention weights buffer
-    /// Shape: [n_heads, seq_len]
-    pub att: Vec<f32>,
-
-    /// Final output logits over vocabulary
-    /// Shape: [vocab_size]
-    pub logits: Vec<f32>,
-
-    /// Key-Value cache for efficient autoregressive generation
-    /// Keys: [n_layers, seq_len, n_kv_heads * head_dim]
-    pub key_cache: Vec<f32>,
-    /// Values: [n_layers, seq_len, n_kv_heads * head_dim]
-    pub value_cache: Vec<f32>,
-
-    /// Temporary workspace to avoid allocations in hot paths.
-    /// Used for intermediate computations
-    pub temp_workspace: Vec<f32>,
-}
-
-impl RunState {
-    /// Creates a new runtime state with pre-allocated buffers based on model configuration.
-    pub fn new(config: &ModelConfig) -> Result<Self> {
-        let ModelConfig {
-            group_size,
-            n_heads,
-            head_dim,
-            n_kv_heads,
-            dim,
-            hidden_dim,
-            vocab_size,
-            seq_len,
-            n_layers,
-            ..
-        } = *config;
-
-        let all_heads_dim = n_heads * head_dim;
-        let kv_dim = n_kv_heads * head_dim;
-
-        Ok(Self {
-            // Core activation buffers
-            x: vec![0.0; dim],
-            xb: vec![0.0; all_heads_dim],
-            xb2: vec![0.0; dim],
-
-            // FFN buffers
-            hb: vec![0.0; hidden_dim],
-            hb2: vec![0.0; hidden_dim],
-
-            // Quantized buffers for efficient computation
-            xq: QuantizedTensor::new(all_heads_dim, group_size),
-            hq: QuantizedTensor::new(hidden_dim, group_size),
-
-            // Attention-specific buffers
-            q: vec![0.0; all_heads_dim],
-            att: vec![0.0; n_heads * seq_len],
-
-            // Output buffer
-            logits: vec![0.0; vocab_size],
-
-            // KV cache for autoregressive generation
-            key_cache: vec![0.0; n_layers * seq_len * kv_dim],
-            value_cache: vec![0.0; n_layers * seq_len * kv_dim],
-
-            // Temporary workspace for computations
-            temp_workspace: vec![0.0; head_dim],
-        })
-    }
 }
