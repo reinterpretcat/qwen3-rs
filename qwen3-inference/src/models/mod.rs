@@ -17,7 +17,7 @@ pub trait Transformer {
 }
 
 #[non_exhaustive]
-enum Transformers {
+pub enum Transformers {
     Qwen3(qwen3::Qwen3Transformer),
 }
 
@@ -51,7 +51,7 @@ impl TransformerBuilder {
         self
     }
 
-    pub fn build(self) -> Result<impl Transformer> {
+    pub fn build(self) -> Result<Transformers> {
         let file = File::open(&self.checkpoint_path)
             .with_context(|| format!("Failed to open checkpoint: {}", self.checkpoint_path))?;
 

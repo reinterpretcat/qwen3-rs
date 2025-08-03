@@ -13,7 +13,7 @@ pub struct Qwen3Transformer {
 }
 
 impl Qwen3Transformer {
-    pub fn new(config: ModelConfig, mut mapper: MemoryMapper) -> Result<Self> {
+    pub(crate) fn new(config: ModelConfig, mut mapper: MemoryMapper) -> Result<Self> {
         let weights = load_weights(&mut mapper, &config)?;
 
         // Initialize runtime state

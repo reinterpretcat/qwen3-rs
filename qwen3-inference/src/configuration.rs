@@ -10,8 +10,8 @@ const CHECKPOINT_MAGIC: i32 = 0x616a6331;
 const CHECKPOINT_VERSION: i32 = 1;
 /// Size of the checkpoint header in bytes
 const HEADER_SIZE: usize = 256;
-/// Size of config structure in bytes (13 i32 fields)
-const CONFIG_SIZE: usize = 52;
+/// Size of config structure in bytes.
+const CONFIG_SIZE: usize = std::mem::size_of::<Config>();
 
 /// Configuration struct for transformer models.
 #[derive(Debug, Clone)]
@@ -31,6 +31,7 @@ pub struct ModelConfig {
 
 /// Configuration struct for reading model parameters from checkpoint files.
 #[derive(Debug, Clone, Copy)]
+#[repr(C)]
 struct Config {
     pub magic_number: i32,
     pub version: i32,
