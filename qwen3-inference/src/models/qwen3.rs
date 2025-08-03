@@ -9,7 +9,6 @@ pub struct Qwen3Transformer {
     final_norm: RMSNorm,
     lm_head: Linear,
     buffers: TransformerBlockBuffers,
-    /// Final output logits over vocabulary [vocab_size]
     logits: Vec<f32>,
     _mapper: MemoryMapper,
 }
@@ -114,6 +113,7 @@ pub struct TransformerBlock {
     pub ffn_norm: RMSNorm,
     pub feed_forward: FeedForward,
     pub layer_idx: usize,
+    pub residual_conn: ResidualConnection,
 }
 
 impl TransformerBlock {
@@ -122,9 +122,10 @@ impl TransformerBlock {
         attention: MultiHeadAttention,
         ffn_norm: RMSNorm,
         feed_forward: FeedForward,
+        residual_conn: ResidualConnection,
         layer_idx: usize,
     ) -> Self {
-        Self { attn_norm, attention, ffn_norm, feed_forward, layer_idx }
+        Self { attn_norm, attention, ffn_norm, feed_forward, layer_idx, residual_conn }
     }
 
     fn forward(&self, pos: usize, buffers: &mut TransformerBlockBuffers) {
@@ -152,7 +153,7 @@ impl TransformerBlock {
         self.attention.wo.forward(&mut buffers.xb2, &buffers.xq);
 
         // Residual connection
-        buffers.x.iter_mut().zip(buffers.xb2.iter()).for_each(|(x_val, &delta)| *x_val += delta);
+        self.residual_conn.forward(&mut buffers.x, &buffers.xb2);
 
         // Feed-forward block with residual connection
         self.ffn_norm.forward(&mut buffers.xb[..dim], &buffers.x);
@@ -170,8 +171,8 @@ impl TransformerBlock {
 
         self.feed_forward.forward(ffn_buffers);
 
-        // Residual connection (only use first dim elements of xb)
-        buffers.x.iter_mut().zip(buffers.xb[..dim].iter()).for_each(|(x_val, &delta)| *x_val += delta);
+        // Residual connection
+        self.residual_conn.forward(&mut buffers.x, &buffers.xb[..dim]);
     }
 }
 
@@ -351,7 +352,9 @@ fn create_transformer_block(
 
     let feed_forward = FeedForward::new(w1, w2, w3);
 
-    Ok(TransformerBlock::new(attn_norm, attention, ffn_norm, feed_forward, layer_idx))
+    let residual_conn = ResidualConnection::new();
+
+    Ok(TransformerBlock::new(attn_norm, attention, ffn_norm, feed_forward, residual_conn, layer_idx))
 }
 
 /// Contains all the learned parameters for the transformer model.

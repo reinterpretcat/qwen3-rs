@@ -224,6 +224,47 @@ impl std::fmt::Debug for Linear {
     }
 }
 
+/// Residual Connection - adds input to the output (skip connection)
+///
+/// **Purpose**: Enables gradient flow and training stability in deep networks
+/// **Formula**: output = input + residual
+///
+/// **Benefits**:
+/// - Mitigates vanishing gradient problem
+/// - Enables training of very deep networks
+/// - Preserves information flow through layers
+/// - Core component of modern architectures (ResNet, Transformer, etc.)
+pub struct ResidualConnection;
+
+impl ResidualConnection {
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Apply residual connection: input += residual
+    ///
+    /// **Arguments:**
+    /// - `input`: Primary input buffer (modified in-place)
+    /// - `residual`: Residual/skip connection input (read-only)
+    pub fn forward(&self, input: &mut [f32], residual: &[f32]) {
+        debug_assert_eq!(
+            input.len(),
+            residual.len(),
+            "Input and residual must have same length: {} vs {}",
+            input.len(),
+            residual.len()
+        );
+
+        input.iter_mut().zip(residual.iter()).for_each(|(inp, &res)| *inp += res);
+    }
+}
+
+impl std::fmt::Debug for ResidualConnection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ResidualConnection").finish()
+    }
+}
+
 /// Multi-Head Attention with Grouped Query Attention (GQA) optimization
 ///
 /// **Architecture Details**:
